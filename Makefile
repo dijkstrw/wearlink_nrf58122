@@ -245,3 +245,4 @@ flash_softdevice:
 
 concat:
 	srec_cat $(SDK_PATH)/components/softdevice/s110/hex/s110_nrf51_8.0.0_softdevice.hex -intel $(OUTPUT_BINARY_DIRECTORY)/nrf51422_xxac_s110.hex -intel -o concat.hex -intel --line-length=44
+

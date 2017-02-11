@@ -106,8 +106,11 @@
 #define OUTPUT_REPORT_INDEX              0                                              /**< Index of Output Report. */
 #define OUTPUT_REPORT_MAX_LEN            1                                              /**< Maximum length of Output Report. */
 #define INPUT_REPORT_KEYS_INDEX          0                                              /**< Index of Input Report. */
+#define INPUT_CCONTROL_KEYS_INDEX	 1
+
 #define OUTPUT_REPORT_BIT_MASK_CAPS_LOCK 0x02                                           /**< CAPS LOCK bit in Output Report (based on 'LED Page (0x08)' of the Universal Serial Bus HID Usage Tables). */
-#define INPUT_REP_REF_ID                 0                                              /**< Id of reference to Keyboard Input Report. */
+#define INPUT_REP_REF_ID                 1                                              /**< Id of reference to Keyboard Input Report. */
+#define INPUT_CC_REP_REF_ID	         2
 #define OUTPUT_REP_REF_ID                0                                              /**< Id of reference to Keyboard Output Report. */
 
 #define APP_FEATURE_NOT_SUPPORTED       BLE_GATT_STATUS_ATTERR_APP_BEGIN + 2            /**< Reply when unsupported features are requested. */
@@ -117,6 +120,7 @@
 #define BASE_USB_HID_SPEC_VERSION        0x0101                                         /**< Version number of base USB HID Specification implemented by this application. */
 
 #define INPUT_REPORT_KEYS_MAX_LEN        8                                              /**< Maximum length of the Input Report characteristic. */
+#define INPUT_CC_REPORT_KEYS_MAX_LEN	 1
 
 #define DEAD_BEEF                        0xDEADBEEF                                     /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
@@ -126,7 +130,6 @@
 
 #define MODIFIER_KEY_POS                 0                                              /**< Position of the modifier byte in the Input Report. */
 #define SCAN_CODE_POS                    2                                              /**< This macro indicates the start position of the key scan code in a HID Report. As per the document titled 'Device Class Definition for Human Interface Devices (HID) V1.11, each report shall have one modifier byte followed by a reserved constant byte and then the key scan code. */
-#define SHIFT_KEY_CODE                   0x02                                           /**< Key code indicating the press of the Shift Key. */
 
 #define MAX_KEYS_IN_ONE_REPORT           (INPUT_REPORT_KEYS_MAX_LEN - SCAN_CODE_POS)    /**< Maximum number of key presses that can be sent in one Input Report. */
 
@@ -207,36 +210,18 @@ static bool                              m_caps_on = false;                     
 
 static ble_uuid_t m_adv_uuids[] = {{BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE, BLE_UUID_TYPE_BLE}};
 
-static uint8_t m_sample_key_press_scan_str[] =                                          /**< Key pattern to be sent when the key press button has been pushed. */
+typedef enum
 {
-    0x0b, /* Key h */
-    0x08, /* Key e */
-    0x0f, /* Key l */
-    0x0f, /* Key l */
-    0x12, /* Key o */
-    0x28  /* Key Return */
-};
-
-static uint8_t m_caps_on_key_scan_str[] =                                                /**< Key pattern to be sent when the output report has been written with the CAPS LOCK bit set. */
-{
-    0x06, /* Key C */
-    0x04, /* Key a */
-    0x13, /* Key p */
-    0x16, /* Key s */
-    0x12, /* Key o */
-    0x11, /* Key n */
-};
-
-static uint8_t m_caps_off_key_scan_str[] =                                               /**< Key pattern to be sent when the output report has been written with the CAPS LOCK bit cleared. */
-{
-    0x06, /* Key C */
-    0x04, /* Key a */
-    0x13, /* Key p */
-    0x16, /* Key s */
-    0x12, /* Key o */
-    0x09, /* Key f */
-};
-
+    RELEASE_KEY                     = 0x00,
+    CONSUMER_CTRL_PLAY              = 0x01,
+    CONSUMER_CTRL_ALCCC             = 0x02,
+    CONSUMER_CTRL_SCAN_NEXT_TRACK   = 0x04,
+    CONSUMER_CTRL_SCAN_PREV_TRACK   = 0x08,
+    CONSUMER_CTRL_VOL_DW            = 0x10,
+    CONSUMER_CTRL_VOL_UP            = 0x20,
+    CONSUMER_CTRL_AC_FORWARD        = 0x40,
+    CONSUMER_CTRL_AC_BACK           = 0x80,
+} consumer_control_t;
 
 /** List to enqueue not just data to be sent, but also related information like the handle, connection handle etc */
 static buffer_list_t buffer_list;
@@ -426,20 +411,21 @@ static void hids_init(void)
 {
     uint32_t                   err_code;
     ble_hids_init_t            hids_init_obj;
-    ble_hids_inp_rep_init_t    input_report_array[1];
+    ble_hids_inp_rep_init_t    input_report_array[2];
     ble_hids_inp_rep_init_t  * p_input_report;
     ble_hids_outp_rep_init_t   output_report_array[1];
     ble_hids_outp_rep_init_t * p_output_report;
     uint8_t                    hid_info_flags;
 
-    memset((void *)input_report_array, 0, sizeof(ble_hids_inp_rep_init_t));
+    memset((void *)input_report_array, 0, 2*sizeof(ble_hids_inp_rep_init_t));
     memset((void *)output_report_array, 0, sizeof(ble_hids_outp_rep_init_t));
-    
+
     static uint8_t report_map_data[] =
     {
         0x05, 0x01,                 // Usage Page (Generic Desktop)
         0x09, 0x06,                 // Usage (Keyboard)
         0xA1, 0x01,                 // Collection (Application)
+        0x85, 0x01,
         0x05, 0x07,                 //     Usage Page (Key Codes)
         0x19, 0xe0,                 //     Usage Minimum (224)
         0x29, 0xe7,                 //     Usage Maximum (231)
@@ -479,7 +465,36 @@ static void hids_init(void)
         0x95, 0x02,                 //     Report Size (8 bit)
         0xB1, 0x02,                 //     Feature (Data, Variable, Absolute)
 
-        0xC0                        // End Collection (Application)
+        0xC0,                       // End Collection (Application)
+
+        // Report ID 2: Advanced buttons
+        0x05, 0x0C,                     // Usage Page (Consumer)
+        0x09, 0x01,                     // Usage (Consumer Control)
+        0xA1, 0x01,                     // Collection (Application)
+        0x85, 0x02,                     //     Report Id (2)
+        0x15, 0x00,                     //     Logical minimum (0)
+        0x25, 0x01,                     //     Logical maximum (1)
+        0x75, 0x01,                     //     Report Size (1)
+        0x95, 0x01,                     //     Report Count (1)
+
+        0x09, 0xCD,                     //     Usage (Play/Pause)
+        0x81, 0x02,                     //     Input (Data,Value,Relative,Bit Field)
+        0x0A, 0x83, 0x01,               //     Usage (AL Consumer Control Configuration)
+        0x81, 0x02,                     //     Input (Data,Value,Relative,Bit Field)
+        0x09, 0xB5,                     //     Usage (Scan Next Track)
+        0x81, 0x02,                     //     Input (Data,Value,Relative,Bit Field)
+        0x09, 0xB6,                     //     Usage (Scan Previous Track)
+        0x81, 0x02,                     //     Input (Data,Value,Relative,Bit Field)
+
+        0x09, 0xEA,                     //     Usage (Volume Down)
+        0x81, 0x02,                     //     Input (Data,Value,Relative,Bit Field)
+        0x09, 0xE9,                     //     Usage (Volume Up)
+        0x81, 0x02,                     //     Input (Data,Value,Relative,Bit Field)
+        0x0A, 0x25, 0x02,               //     Usage (AC Forward)
+        0x81, 0x02,                     //     Input (Data,Value,Relative,Bit Field)
+        0x0A, 0x24, 0x02,               //     Usage (AC Back)
+        0x81, 0x02,                     //     Input (Data,Value,Relative,Bit Field)
+        0xC0 // End Collection
     };
 
     // Initialize HID Service
@@ -497,6 +512,17 @@ static void hids_init(void)
     p_output_report->rep_ref.report_id   = OUTPUT_REP_REF_ID;
     p_output_report->rep_ref.report_type = BLE_HIDS_REP_TYPE_OUTPUT;
 
+    // Initialize HID Consumer Control
+    p_input_report                      = &input_report_array[INPUT_CCONTROL_KEYS_INDEX];
+    p_input_report->max_len             = INPUT_CC_REPORT_KEYS_MAX_LEN;
+    p_input_report->rep_ref.report_id   = INPUT_CC_REP_REF_ID;
+    p_input_report->rep_ref.report_type = BLE_HIDS_REP_TYPE_INPUT;
+
+    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&p_input_report->security_mode.cccd_write_perm);
+    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&p_input_report->security_mode.read_perm);
+    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&p_input_report->security_mode.write_perm);
+
+
     BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&p_output_report->security_mode.read_perm);
     BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&p_output_report->security_mode.write_perm);
 
@@ -508,7 +534,7 @@ static void hids_init(void)
     hids_init_obj.error_handler                  = service_error_handler;
     hids_init_obj.is_kb                          = true;
     hids_init_obj.is_mouse                       = false;
-    hids_init_obj.inp_rep_count                  = 1;
+    hids_init_obj.inp_rep_count                  = 2;
     hids_init_obj.p_inp_rep_array                = input_report_array;
     hids_init_obj.outp_rep_count                 = 1;
     hids_init_obj.p_outp_rep_array               = output_report_array;
@@ -610,20 +636,10 @@ static void timers_start(void)
     APP_ERROR_CHECK(err_code);
 }
 
-
-
-/** @brief   Function for checking if the Shift key is pressed.
- *
- *  @returns true if the SHIFT_BUTTON is pressed. false otherwise.
- */
-static bool is_shift_key_pressed(void)
+static uint32_t consumer_control_send(consumer_control_t cmd)
 {
-    bool result;
-    uint32_t err_code = bsp_button_is_pressed(SHIFT_BUTTON_ID,&result);
-    APP_ERROR_CHECK(err_code);
-    return result;
+    return ble_hids_inp_rep_send(&m_hids, INPUT_CCONTROL_KEYS_INDEX, INPUT_CC_REPORT_KEYS_MAX_LEN, (uint8_t*)&cmd);
 }
-
 
 /**@brief   Function for transmitting a key scan Press & Release Notification.
  *
@@ -684,10 +700,6 @@ static uint32_t send_key_scan_press_release(ble_hids_t *   p_hids,
         // Copy the scan code.
         memcpy(data + SCAN_CODE_POS + offset, p_key_pattern + offset, data_len - offset);
         
-        if (is_shift_key_pressed())
-        {
-            data[MODIFIER_KEY_POS] |= SHIFT_KEY_CODE;
-        }
 
         if (!m_in_boot_mode)
         {
@@ -914,29 +926,6 @@ static void on_hid_rep_char_write(ble_hids_evt_t *p_evt)
                                              0,
                                              &report_val);
             APP_ERROR_CHECK(err_code);
-
-            if (!m_caps_on && ((report_val & OUTPUT_REPORT_BIT_MASK_CAPS_LOCK) != 0))
-            {
-                // Caps Lock is turned On.
-                err_code = bsp_indication_set(BSP_INDICATE_ALERT_3);
-                APP_ERROR_CHECK(err_code);
-
-                keys_send(sizeof(m_caps_on_key_scan_str), m_caps_on_key_scan_str);
-                m_caps_on = true;
-            }
-            else if (m_caps_on && ((report_val & OUTPUT_REPORT_BIT_MASK_CAPS_LOCK) == 0))
-            {
-                // Caps Lock is turned Off .
-                err_code = bsp_indication_set(BSP_INDICATE_ALERT_OFF);
-                APP_ERROR_CHECK(err_code);
-
-                keys_send(sizeof(m_caps_off_key_scan_str), m_caps_off_key_scan_str);
-                m_caps_on = false;
-            }
-            else
-            {
-                // The report received is not supported by this application. Do nothing.
-            }
         }
     }
 }
@@ -1297,8 +1286,6 @@ static void scheduler_init(void)
 static void bsp_event_handler(bsp_event_t event)
 {
     uint32_t err_code;
-    static uint8_t * p_key = m_sample_key_press_scan_str;
-    static uint8_t size = 0;
 
     switch (event)
     {
@@ -1325,14 +1312,7 @@ static void bsp_event_handler(bsp_event_t event)
         case BSP_EVENT_KEY_0:
             if (m_conn_handle != BLE_CONN_HANDLE_INVALID)
             {
-                keys_send(1, p_key);
-                p_key++;
-                size++;
-                if (size == MAX_KEYS_IN_ONE_REPORT)
-                {
-                    p_key = m_sample_key_press_scan_str;
-                    size = 0;
-                }
+                APP_ERROR_CHECK(consumer_control_send(CONSUMER_CTRL_VOL_DW));
             }
             break;
 
