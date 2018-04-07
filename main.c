@@ -62,6 +62,9 @@
 #define UART_TX_BUF_SIZE 256                                                            /**< UART TX buffer size. */
 #define UART_RX_BUF_SIZE 1                                                              /**< UART RX buffer size. */
 
+#define VOLDOWN_BUTTON                   BSP_BUTTON_1
+#define VOLUP_BUTTON                     BSP_BUTTON_0
+#define BUTTON_DETECTION_DELAY           APP_TIMER_TICKS(50, APP_TIMER_PRESCALER)       /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
 #define KEY_PRESS_BUTTON_ID              0                                              /**< Button used as Keyboard key press. */
 #define SHIFT_BUTTON_ID                  1                                              /**< Button used as 'SHIFT' Key. */
 
@@ -105,12 +108,12 @@
 
 #define OUTPUT_REPORT_INDEX              0                                              /**< Index of Output Report. */
 #define OUTPUT_REPORT_MAX_LEN            1                                              /**< Maximum length of Output Report. */
-#define INPUT_REPORT_KEYS_INDEX          0                                              /**< Index of Input Report. */
-#define INPUT_CCONTROL_KEYS_INDEX	 1
+#define INPUT_REPORT_KEYS_INDEX	 0
+#define INPUT_CCONTROL_KEYS_INDEX	 0
 
 #define OUTPUT_REPORT_BIT_MASK_CAPS_LOCK 0x02                                           /**< CAPS LOCK bit in Output Report (based on 'LED Page (0x08)' of the Universal Serial Bus HID Usage Tables). */
 #define INPUT_REP_REF_ID                 1                                              /**< Id of reference to Keyboard Input Report. */
-#define INPUT_CC_REP_REF_ID	         2
+#define INPUT_CC_REP_REF_ID	         1
 #define OUTPUT_REP_REF_ID                0                                              /**< Id of reference to Keyboard Output Report. */
 
 #define APP_FEATURE_NOT_SUPPORTED       BLE_GATT_STATUS_ATTERR_APP_BEGIN + 2            /**< Reply when unsupported features are requested. */
@@ -411,62 +414,17 @@ static void hids_init(void)
 {
     uint32_t                   err_code;
     ble_hids_init_t            hids_init_obj;
-    ble_hids_inp_rep_init_t    input_report_array[2];
+    ble_hids_inp_rep_init_t    input_report_array[1];
     ble_hids_inp_rep_init_t  * p_input_report;
     ble_hids_outp_rep_init_t   output_report_array[1];
-    ble_hids_outp_rep_init_t * p_output_report;
+//    ble_hids_outp_rep_init_t * p_output_report;
     uint8_t                    hid_info_flags;
 
-    memset((void *)input_report_array, 0, 2*sizeof(ble_hids_inp_rep_init_t));
+    memset((void *)input_report_array, 0, sizeof(ble_hids_inp_rep_init_t));
     memset((void *)output_report_array, 0, sizeof(ble_hids_outp_rep_init_t));
 
     static uint8_t report_map_data[] =
     {
-        0x05, 0x01,                 // Usage Page (Generic Desktop)
-        0x09, 0x06,                 // Usage (Keyboard)
-        0xA1, 0x01,                 // Collection (Application)
-        0x85, 0x01,
-        0x05, 0x07,                 //     Usage Page (Key Codes)
-        0x19, 0xe0,                 //     Usage Minimum (224)
-        0x29, 0xe7,                 //     Usage Maximum (231)
-        0x15, 0x00,                 //     Logical Minimum (0)
-        0x25, 0x01,                 //     Logical Maximum (1)
-        0x75, 0x01,                 //     Report Size (1)
-        0x95, 0x08,                 //     Report Count (8)
-        0x81, 0x02,                 //     Input (Data, Variable, Absolute)
-
-        0x95, 0x01,                 //     Report Count (1)
-        0x75, 0x08,                 //     Report Size (8)
-        0x81, 0x01,                 //     Input (Constant) reserved byte(1)
-
-        0x95, 0x05,                 //     Report Count (5)
-        0x75, 0x01,                 //     Report Size (1)
-        0x05, 0x08,                 //     Usage Page (Page# for LEDs)
-        0x19, 0x01,                 //     Usage Minimum (1)
-        0x29, 0x05,                 //     Usage Maximum (5)
-        0x91, 0x02,                 //     Output (Data, Variable, Absolute), Led report
-        0x95, 0x01,                 //     Report Count (1)
-        0x75, 0x03,                 //     Report Size (3)
-        0x91, 0x01,                 //     Output (Data, Variable, Absolute), Led report padding
-
-        0x95, 0x06,                 //     Report Count (6)
-        0x75, 0x08,                 //     Report Size (8)
-        0x15, 0x00,                 //     Logical Minimum (0)
-        0x25, 0x65,                 //     Logical Maximum (101)
-        0x05, 0x07,                 //     Usage Page (Key codes)
-        0x19, 0x00,                 //     Usage Minimum (0)
-        0x29, 0x65,                 //     Usage Maximum (101)
-        0x81, 0x00,                 //     Input (Data, Array) Key array(6 bytes)
-
-        0x09, 0x05,                 //     Usage (Vendor Defined)
-        0x15, 0x00,                 //     Logical Minimum (0)
-        0x26, 0xFF, 0x00,           //     Logical Maximum (255)
-        0x75, 0x08,                 //     Report Count (2)
-        0x95, 0x02,                 //     Report Size (8 bit)
-        0xB1, 0x02,                 //     Feature (Data, Variable, Absolute)
-
-        0xC0,                       // End Collection (Application)
-
         // Report ID 2: Advanced buttons
         0x05, 0x0C,                     // Usage Page (Consumer)
         0x09, 0x01,                     // Usage (Consumer Control)
@@ -497,21 +455,6 @@ static void hids_init(void)
         0xC0 // End Collection
     };
 
-    // Initialize HID Service
-    p_input_report                      = &input_report_array[INPUT_REPORT_KEYS_INDEX];
-    p_input_report->max_len             = INPUT_REPORT_KEYS_MAX_LEN;
-    p_input_report->rep_ref.report_id   = INPUT_REP_REF_ID;
-    p_input_report->rep_ref.report_type = BLE_HIDS_REP_TYPE_INPUT;
-
-    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&p_input_report->security_mode.cccd_write_perm);
-    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&p_input_report->security_mode.read_perm);
-    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&p_input_report->security_mode.write_perm);
-
-    p_output_report                      = &output_report_array[OUTPUT_REPORT_INDEX];
-    p_output_report->max_len             = OUTPUT_REPORT_MAX_LEN;
-    p_output_report->rep_ref.report_id   = OUTPUT_REP_REF_ID;
-    p_output_report->rep_ref.report_type = BLE_HIDS_REP_TYPE_OUTPUT;
-
     // Initialize HID Consumer Control
     p_input_report                      = &input_report_array[INPUT_CCONTROL_KEYS_INDEX];
     p_input_report->max_len             = INPUT_CC_REPORT_KEYS_MAX_LEN;
@@ -522,22 +465,18 @@ static void hids_init(void)
     BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&p_input_report->security_mode.read_perm);
     BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&p_input_report->security_mode.write_perm);
 
-
-    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&p_output_report->security_mode.read_perm);
-    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&p_output_report->security_mode.write_perm);
-
     hid_info_flags = HID_INFO_FLAG_REMOTE_WAKE_MSK | HID_INFO_FLAG_NORMALLY_CONNECTABLE_MSK;
 
     memset(&hids_init_obj, 0, sizeof(hids_init_obj));
 
     hids_init_obj.evt_handler                    = on_hids_evt;
     hids_init_obj.error_handler                  = service_error_handler;
-    hids_init_obj.is_kb                          = true;
+    hids_init_obj.is_kb                          = false;
     hids_init_obj.is_mouse                       = false;
-    hids_init_obj.inp_rep_count                  = 2;
+    hids_init_obj.inp_rep_count                  = 1;
     hids_init_obj.p_inp_rep_array                = input_report_array;
     hids_init_obj.outp_rep_count                 = 1;
-    hids_init_obj.p_outp_rep_array               = output_report_array;
+    hids_init_obj.p_outp_rep_array               = NULL;
     hids_init_obj.feature_rep_count              = 0;
     hids_init_obj.p_feature_rep_array            = NULL;
     hids_init_obj.rep_map.data_len               = sizeof(report_map_data);
@@ -552,13 +491,6 @@ static void hids_init(void)
     BLE_GAP_CONN_SEC_MODE_SET_NO_ACCESS(&hids_init_obj.rep_map.security_mode.write_perm);
     BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&hids_init_obj.hid_information.security_mode.read_perm);
     BLE_GAP_CONN_SEC_MODE_SET_NO_ACCESS(&hids_init_obj.hid_information.security_mode.write_perm);
-
-    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(
-        &hids_init_obj.security_mode_boot_kb_inp_rep.cccd_write_perm);
-    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&hids_init_obj.security_mode_boot_kb_inp_rep.read_perm);
-    BLE_GAP_CONN_SEC_MODE_SET_NO_ACCESS(&hids_init_obj.security_mode_boot_kb_inp_rep.write_perm);
-    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&hids_init_obj.security_mode_boot_kb_outp_rep.read_perm);
-    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&hids_init_obj.security_mode_boot_kb_outp_rep.write_perm);
 
     BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&hids_init_obj.security_mode_protocol.read_perm);
     BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&hids_init_obj.security_mode_protocol.write_perm);
@@ -1143,7 +1075,7 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
 
         case BLE_EVT_TX_COMPLETE:
             // Send next key event
-            (void) buffer_dequeue(true);
+//            (void) buffer_dequeue(true);
             break;
 
         case BLE_GAP_EVT_DISCONNECTED:
@@ -1310,10 +1242,10 @@ static void bsp_event_handler(bsp_event_t event)
             break;
 
         case BSP_EVENT_KEY_0:
-            if (m_conn_handle != BLE_CONN_HANDLE_INVALID)
+/*            if (m_conn_handle != BLE_CONN_HANDLE_INVALID)
             {
                 APP_ERROR_CHECK(consumer_control_send(CONSUMER_CTRL_VOL_DW));
-            }
+                }*/
             break;
 
         default:
@@ -1433,6 +1365,58 @@ static void buttons_leds_init(bool * p_erase_bonds)
     *p_erase_bonds = (startup_event == BSP_EVENT_CLEAR_BONDING_DATA);
 }
 
+/**@brief Function for handling button events.
+ *
+ * @param[in]   pin_no   The pin number of the button pressed.
+ */
+static void button_event_handler(uint8_t pin_no, uint8_t button_action)
+{
+    if (button_action == APP_BUTTON_PUSH)
+    {
+        switch (pin_no)
+        {
+            case VOLDOWN_BUTTON:
+                APP_ERROR_CHECK(consumer_control_send(CONSUMER_CTRL_VOL_DW));
+                app_trace_log("Sending CONSUMER_CTRL_VOL_DW");
+                break;
+            case VOLUP_BUTTON:
+                APP_ERROR_CHECK(consumer_control_send(CONSUMER_CTRL_VOL_UP));
+                app_trace_log("Sending CONSUMER_CTRL_VOL_UP");
+                break;
+            default:
+                APP_ERROR_HANDLER(pin_no);
+                break;
+        }
+    }
+    else if (button_action == APP_BUTTON_RELEASE)
+    {
+        switch (pin_no)
+        {
+            case VOLDOWN_BUTTON:
+            /* Fall-through */
+            case VOLUP_BUTTON:
+                APP_ERROR_CHECK(consumer_control_send(RELEASE_KEY));
+                app_trace_log("Sending RELEASE_KEY");
+                break;
+            default:
+                APP_ERROR_HANDLER(pin_no);
+                break;
+        }
+    }
+}
+
+/**@brief Function for initializing the button handler module.
+ */
+static void buttons_init(void)
+{
+    static app_button_cfg_t buttons[] =
+    {
+        {VOLDOWN_BUTTON,            false, BUTTON_PULL, button_event_handler},
+        {VOLUP_BUTTON,              false, BUTTON_PULL, button_event_handler}
+    };
+
+    app_button_init(buttons, sizeof(buttons) / sizeof(buttons[0]), BUTTON_DETECTION_DELAY);
+}
 
 /**@brief Function for the Power manager.
  */
@@ -1453,16 +1437,30 @@ int main(void)
     // Initialize.
     app_trace_init();
     timers_init();
+    app_trace_log("timers inited");
     buttons_leds_init(&erase_bonds);
+    app_trace_log("button/leds inited");
+
+    buttons_init();
+
     ble_stack_init();
+    app_trace_log("ble inited");
     scheduler_init();
+    app_trace_log("sched inited");
     device_manager_init(erase_bonds);
+    app_trace_log("device manager inited");
     gap_params_init();
+    app_trace_log("gap inited");
     advertising_init();
+    app_trace_log("adv inited");
     services_init();
+    app_trace_log("services inited");
     sensor_simulator_init();
+    app_trace_log("simulator inited");
     conn_params_init();
+    app_trace_log("params inited");
     buffer_init();
+    app_trace_log("buffer inited");
 
     // Start execution.
     timers_start();
