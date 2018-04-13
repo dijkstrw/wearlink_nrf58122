@@ -59,17 +59,21 @@
 
 #define IS_SRVC_CHANGED_CHARACT_PRESENT  0                                              /**< Include or not the service_changed characteristic. if not enabled, the server's database cannot be changed for the lifetime of the device*/
 
-#define UART_TX_BUF_SIZE 256                                                            /**< UART TX buffer size. */
+#define UART_TX_BUF_SIZE 2560                                                            /**< UART TX buffer size. */
 #define UART_RX_BUF_SIZE 1                                                              /**< UART RX buffer size. */
 
-#define VOLDOWN_BUTTON                   BSP_BUTTON_1
-#define VOLUP_BUTTON                     BSP_BUTTON_0
+#define VOLDOWN_BUTTON                   BUTTON_1
+#define VOLUP_BUTTON                     BUTTON_0
 #define BUTTON_DETECTION_DELAY           APP_TIMER_TICKS(50, APP_TIMER_PRESCALER)       /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
 #define KEY_PRESS_BUTTON_ID              0                                              /**< Button used as Keyboard key press. */
 #define SHIFT_BUTTON_ID                  1                                              /**< Button used as 'SHIFT' Key. */
 
-#define DEVICE_NAME                      "Nordic_Keyboard"                              /**< Name of device. Will be included in the advertising data. */
-#define MANUFACTURER_NAME                "NordicSemiconductor"                          /**< Manufacturer. Will be passed to Device Information Service. */
+#define INPUT_CCONTROL_KEYS_INDEX	 0
+#define INPUT_CC_REP_REF_ID	         1
+#define INPUT_CC_REPORT_KEYS_MAX_LEN	 1
+
+#define DEVICE_NAME                      "WearLink"                              /**< Name of device. Will be included in the advertising data. */
+#define MANUFACTURER_NAME                "Dijkstra.xyz"                          /**< Manufacturer. Will be passed to Device Information Service. */
 
 #define APP_TIMER_PRESCALER              0                                              /**< Value of the RTC1 PRESCALER register. */
 #define APP_TIMER_OP_QUEUE_SIZE          4                                              /**< Size of timer operation queues. */
@@ -109,11 +113,9 @@
 #define OUTPUT_REPORT_INDEX              0                                              /**< Index of Output Report. */
 #define OUTPUT_REPORT_MAX_LEN            1                                              /**< Maximum length of Output Report. */
 #define INPUT_REPORT_KEYS_INDEX	 0
-#define INPUT_CCONTROL_KEYS_INDEX	 0
 
 #define OUTPUT_REPORT_BIT_MASK_CAPS_LOCK 0x02                                           /**< CAPS LOCK bit in Output Report (based on 'LED Page (0x08)' of the Universal Serial Bus HID Usage Tables). */
 #define INPUT_REP_REF_ID                 1                                              /**< Id of reference to Keyboard Input Report. */
-#define INPUT_CC_REP_REF_ID	         1
 #define OUTPUT_REP_REF_ID                0                                              /**< Id of reference to Keyboard Output Report. */
 
 #define APP_FEATURE_NOT_SUPPORTED       BLE_GATT_STATUS_ATTERR_APP_BEGIN + 2            /**< Reply when unsupported features are requested. */
@@ -123,7 +125,6 @@
 #define BASE_USB_HID_SPEC_VERSION        0x0101                                         /**< Version number of base USB HID Specification implemented by this application. */
 
 #define INPUT_REPORT_KEYS_MAX_LEN        8                                              /**< Maximum length of the Input Report characteristic. */
-#define INPUT_CC_REPORT_KEYS_MAX_LEN	 1
 
 #define DEAD_BEEF                        0xDEADBEEF                                     /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
@@ -342,7 +343,7 @@ static void gap_params_init(void)
                                           strlen(DEVICE_NAME));
     APP_ERROR_CHECK(err_code);
 
-    err_code = sd_ble_gap_appearance_set(BLE_APPEARANCE_HID_KEYBOARD);
+    err_code = sd_ble_gap_appearance_set(BLE_APPEARANCE_GENERIC_HID);
     APP_ERROR_CHECK(err_code);
 
     memset(&gap_conn_params, 0, sizeof(gap_conn_params));
@@ -429,7 +430,7 @@ static void hids_init(void)
         0x05, 0x0C,                     // Usage Page (Consumer)
         0x09, 0x01,                     // Usage (Consumer Control)
         0xA1, 0x01,                     // Collection (Application)
-        0x85, 0x02,                     //     Report Id (2)
+        0x85, 0x01,                     //     Report Id (1)
         0x15, 0x00,                     //     Logical minimum (0)
         0x25, 0x01,                     //     Logical maximum (1)
         0x75, 0x01,                     //     Report Size (1)
@@ -475,7 +476,7 @@ static void hids_init(void)
     hids_init_obj.is_mouse                       = false;
     hids_init_obj.inp_rep_count                  = 1;
     hids_init_obj.p_inp_rep_array                = input_report_array;
-    hids_init_obj.outp_rep_count                 = 1;
+    hids_init_obj.outp_rep_count                 = 0;
     hids_init_obj.p_outp_rep_array               = NULL;
     hids_init_obj.feature_rep_count              = 0;
     hids_init_obj.p_feature_rep_array            = NULL;
@@ -873,12 +874,12 @@ static void sleep_mode_enter(void)
     APP_ERROR_CHECK(err_code);
 
     // Prepare wakeup buttons.
-    err_code = bsp_btn_ble_sleep_mode_prepare();
-    APP_ERROR_CHECK(err_code);
+//    err_code = bsp_btn_ble_sleep_mode_prepare();
+//    APP_ERROR_CHECK(err_code);
 
     // Go to system-off mode (this function will not return; wakeup will cause a reset).
-    err_code = sd_power_system_off();
-    APP_ERROR_CHECK(err_code);
+//    err_code = sd_power_system_off();
+//    APP_ERROR_CHECK(err_code);
 }
 
 
@@ -893,84 +894,9 @@ static void on_hids_evt(ble_hids_t * p_hids, ble_hids_evt_t *p_evt)
 {
     switch (p_evt->evt_type)
     {
-        case BLE_HIDS_EVT_BOOT_MODE_ENTERED:
-            m_in_boot_mode = true;
-            break;
-
-        case BLE_HIDS_EVT_REPORT_MODE_ENTERED:
-            m_in_boot_mode = false;
-            break;
-
         case BLE_HIDS_EVT_REP_CHAR_WRITE:
             on_hid_rep_char_write(p_evt);
             break;
-
-        case BLE_HIDS_EVT_NOTIF_ENABLED:
-        {
-            dm_service_context_t   service_context;
-            service_context.service_type = DM_PROTOCOL_CNTXT_GATT_SRVR_ID;
-            service_context.context_data.len = 0;
-            service_context.context_data.p_data = NULL;
-
-            if (m_in_boot_mode)
-            {
-                // Protocol mode is Boot Protocol mode.
-                if (
-                    p_evt->params.notification.char_id.uuid
-                    ==
-                    BLE_UUID_BOOT_KEYBOARD_INPUT_REPORT_CHAR
-                )
-                {
-                    // The notification of boot keyboard input report has been enabled.
-                    // Save the system attribute (CCCD) information into the flash.
-                    uint32_t err_code;
-
-                    err_code = dm_service_context_set(&m_bonded_peer_handle, &service_context);
-                    if (err_code != NRF_ERROR_INVALID_STATE)
-                    {
-                        APP_ERROR_CHECK(err_code);
-                    }
-                    else
-                    {
-                        // The system attributes could not be written to the flash because
-                        // the connected central is not a new central. The system attributes
-                        // will only be written to flash only when disconnected from this central.
-                        // Do nothing now.
-                    }
-                }
-                else
-                {
-                    // Do nothing.
-                }
-            }
-            else if (p_evt->params.notification.char_id.rep_type == BLE_HIDS_REP_TYPE_INPUT)
-            {
-                // The protocol mode is Report Protocol mode. And the CCCD for the input report
-                // is changed. It is now time to store all the CCCD information (system
-                // attributes) into the flash.
-                uint32_t err_code;
-
-                err_code = dm_service_context_set(&m_bonded_peer_handle, &service_context);
-                if (err_code != NRF_ERROR_INVALID_STATE)
-                {
-                    APP_ERROR_CHECK(err_code);
-                }
-                else
-                {
-                    // The system attributes could not be written to the flash because
-                    // the connected central is not a new central. The system attributes
-                    // will only be written to flash only when disconnected from this central.
-                    // Do nothing now.
-                }
-            }
-            else
-            {
-                // The notification of the report that was enabled by the central is not interesting
-                // to this application. So do nothing.
-            }
-            break;
-        }
-
         default:
             // No implementation needed.
             break;
@@ -1149,7 +1075,7 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
 static void ble_evt_dispatch(ble_evt_t * p_ble_evt)
 {
     dm_ble_evt_handler(p_ble_evt);
-    bsp_btn_ble_on_ble_evt(p_ble_evt);
+//    bsp_btn_ble_on_ble_evt(p_ble_evt);
     on_ble_evt(p_ble_evt);
     ble_advertising_on_ble_evt(p_ble_evt);
     ble_conn_params_on_ble_evt(p_ble_evt);
@@ -1218,7 +1144,6 @@ static void scheduler_init(void)
 static void bsp_event_handler(bsp_event_t event)
 {
     uint32_t err_code;
-
     switch (event)
     {
         case BSP_EVENT_SLEEP:
@@ -1242,13 +1167,32 @@ static void bsp_event_handler(bsp_event_t event)
             break;
 
         case BSP_EVENT_KEY_0:
-/*            if (m_conn_handle != BLE_CONN_HANDLE_INVALID)
+            if (m_conn_handle != BLE_CONN_HANDLE_INVALID)
             {
-                APP_ERROR_CHECK(consumer_control_send(CONSUMER_CTRL_VOL_DW));
-                }*/
+                app_trace_log("Sending CONSUMER_CTRL_VOL_DW");
+                consumer_control_send(CONSUMER_CTRL_VOL_DW);
+            }
             break;
 
-        default:
+        case BSP_EVENT_KEY_1:
+            if (m_conn_handle != BLE_CONN_HANDLE_INVALID)
+            {
+                app_trace_log("Sending CONSUMER_CTRL_VOL_UP");
+                consumer_control_send(CONSUMER_CTRL_VOL_UP);
+                break;
+            }
+            break;
+
+        case BSP_EVENT_NOTHING:
+            if (m_conn_handle != BLE_CONN_HANDLE_INVALID)
+            {
+                APP_ERROR_CHECK(consumer_control_send(RELEASE_KEY));
+                app_trace_log("Sending RELEASE_KEY");
+                break;
+            }
+            break;
+
+    default:
             break;
     }
 }
@@ -1365,59 +1309,6 @@ static void buttons_leds_init(bool * p_erase_bonds)
     *p_erase_bonds = (startup_event == BSP_EVENT_CLEAR_BONDING_DATA);
 }
 
-/**@brief Function for handling button events.
- *
- * @param[in]   pin_no   The pin number of the button pressed.
- */
-static void button_event_handler(uint8_t pin_no, uint8_t button_action)
-{
-    if (button_action == APP_BUTTON_PUSH)
-    {
-        switch (pin_no)
-        {
-            case VOLDOWN_BUTTON:
-                APP_ERROR_CHECK(consumer_control_send(CONSUMER_CTRL_VOL_DW));
-                app_trace_log("Sending CONSUMER_CTRL_VOL_DW");
-                break;
-            case VOLUP_BUTTON:
-                APP_ERROR_CHECK(consumer_control_send(CONSUMER_CTRL_VOL_UP));
-                app_trace_log("Sending CONSUMER_CTRL_VOL_UP");
-                break;
-            default:
-                APP_ERROR_HANDLER(pin_no);
-                break;
-        }
-    }
-    else if (button_action == APP_BUTTON_RELEASE)
-    {
-        switch (pin_no)
-        {
-            case VOLDOWN_BUTTON:
-            /* Fall-through */
-            case VOLUP_BUTTON:
-                APP_ERROR_CHECK(consumer_control_send(RELEASE_KEY));
-                app_trace_log("Sending RELEASE_KEY");
-                break;
-            default:
-                APP_ERROR_HANDLER(pin_no);
-                break;
-        }
-    }
-}
-
-/**@brief Function for initializing the button handler module.
- */
-static void buttons_init(void)
-{
-    static app_button_cfg_t buttons[] =
-    {
-        {VOLDOWN_BUTTON,            false, BUTTON_PULL, button_event_handler},
-        {VOLUP_BUTTON,              false, BUTTON_PULL, button_event_handler}
-    };
-
-    app_button_init(buttons, sizeof(buttons) / sizeof(buttons[0]), BUTTON_DETECTION_DELAY);
-}
-
 /**@brief Function for the Power manager.
  */
 static void power_manage(void)
@@ -1437,30 +1328,17 @@ int main(void)
     // Initialize.
     app_trace_init();
     timers_init();
-    app_trace_log("timers inited");
     buttons_leds_init(&erase_bonds);
-    app_trace_log("button/leds inited");
-
-    buttons_init();
 
     ble_stack_init();
-    app_trace_log("ble inited");
     scheduler_init();
-    app_trace_log("sched inited");
     device_manager_init(erase_bonds);
-    app_trace_log("device manager inited");
     gap_params_init();
-    app_trace_log("gap inited");
     advertising_init();
-    app_trace_log("adv inited");
     services_init();
-    app_trace_log("services inited");
     sensor_simulator_init();
-    app_trace_log("simulator inited");
     conn_params_init();
-    app_trace_log("params inited");
     buffer_init();
-    app_trace_log("buffer inited");
 
     // Start execution.
     timers_start();
@@ -1471,7 +1349,7 @@ int main(void)
     for (;;)
     {
         app_sched_execute();
-        power_manage();
+//        power_manage();
     }
 }
 

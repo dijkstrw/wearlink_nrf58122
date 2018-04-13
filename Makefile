@@ -74,6 +74,7 @@ ASM_SOURCE_FILES  = $(SDK_PATH)/components/toolchain/gcc/gcc_startup_nrf51.s
 #includes common to all targets
 INC_PATHS  = -I$(PROJECT_PATH)/config/ble_app_hids_keyboard_s110_pca10028
 INC_PATHS += -I$(PROJECT_PATH)/config
+INC_PATHS += -I$(PROJECT_PATH)/
 INC_PATHS += -I$(SDK_PATH)/components/libraries/scheduler
 INC_PATHS += -I$(SDK_PATH)/components/drivers_nrf/config
 INC_PATHS += -I$(SDK_PATH)/examples/bsp
@@ -91,7 +92,7 @@ INC_PATHS += -I$(SDK_PATH)/components/device
 INC_PATHS += -I$(SDK_PATH)/components/libraries/uart
 INC_PATHS += -I$(SDK_PATH)/components/libraries/button
 INC_PATHS += -I$(SDK_PATH)/components/libraries/timer
-INC_PATHS += -I$(SDK_PATH)/components/softdevice/s110/headers
+INC_PATHS += -I$(SDK_PATH)/components/softdevice/s130/headers
 INC_PATHS += -I$(SDK_PATH)/components/drivers_nrf/gpiote
 INC_PATHS += -I$(SDK_PATH)/components/drivers_nrf/hal
 INC_PATHS += -I$(SDK_PATH)/components/toolchain/gcc
@@ -110,7 +111,7 @@ OUTPUT_BINARY_DIRECTORY = $(OBJECT_DIRECTORY)
 BUILD_DIRECTORIES := $(sort $(OBJECT_DIRECTORY) $(OUTPUT_BINARY_DIRECTORY) $(LISTING_DIRECTORY) )
 
 #flags common to all targets
-CFLAGS  = -DBOARD_PCA10001
+CFLAGS  = -DBOARD_CUSTOM
 CFLAGS += -DSOFTDEVICE_PRESENT
 CFLAGS += -DNRF51
 CFLAGS += -DS110
@@ -118,6 +119,7 @@ CFLAGS += -DBLE_STACK_SUPPORT_REQD
 CFLAGS += -DSWI_DISABLE0
 CFLAGS += -DBSP_UART_SUPPORT
 CFLAGS += -DENABLE_DEBUG_LOG_SUPPORT
+CFLAGS += -DDEBUG
 CFLAGS += -mcpu=cortex-m0
 CFLAGS += -mthumb -mabi=aapcs --std=gnu99
 CFLAGS += -Wall -g -O0
@@ -131,13 +133,13 @@ LDFLAGS += -Xlinker -Map=$(LISTING_DIRECTORY)/$(OUTPUT_FILENAME).map
 LDFLAGS += -mthumb -mabi=aapcs -L $(TEMPLATE_PATH) -T$(LINKER_SCRIPT)
 LDFLAGS += -mcpu=cortex-m0
 # let linker to dump unused sections
-#LDFLAGS += -Wl,--gc-sections
+LDFLAGS += -Wl,--gc-sections
 # use newlib in nano version
 LDFLAGS += --specs=nano.specs -lc -lnosys
 
 # Assembler flags
 ASMFLAGS += -x assembler-with-cpp
-ASMFLAGS += -DBOARD_PCA10001
+ASMFLAGS += -DBOARD_CUSTOM
 ASMFLAGS += -DSOFTDEVICE_PRESENT
 ASMFLAGS += -DNRF51
 ASMFLAGS += -DS110
@@ -162,6 +164,7 @@ help:
 C_SOURCE_FILE_NAMES = $(notdir $(C_SOURCE_FILES))
 C_PATHS = $(call remduplicates, $(dir $(C_SOURCE_FILES) ) )
 C_OBJECTS = $(addprefix $(OBJECT_DIRECTORY)/, $(C_SOURCE_FILE_NAMES:.c=.o) )
+D_OBJECTS = $(addprefix $(OBJECT_DIRECTORY)/, $(C_SOURCE_FILE_NAMES:.c=.d) )
 
 ASM_SOURCE_FILE_NAMES = $(notdir $(ASM_SOURCE_FILES))
 ASM_PATHS = $(call remduplicates, $(dir $(ASM_SOURCE_FILES) ))
@@ -174,7 +177,7 @@ OBJECTS = $(C_OBJECTS) $(ASM_OBJECTS)
 
 nrf51422_xxac_s110: OUTPUT_FILENAME := nrf51422_xxac_s110
 nrf51422_xxac_s110: LINKER_SCRIPT=ble_app_hids_keyboard_gcc_nrf51.ld
-nrf51422_xxac_s110: $(BUILD_DIRECTORIES) $(OBJECTS)
+nrf51422_xxac_s110: $(BUILD_DIRECTORIES) $(OBJECTS) $(D_OBJECTS)
 	@echo Linking target: $(OUTPUT_FILENAME).out
 	$(NO_ECHO)$(CC) $(LDFLAGS) $(OBJECTS) $(LIBS) -o $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).out
 	$(NO_ECHO)$(MAKE) -f $(MAKEFILE_NAME) -C $(MAKEFILE_DIR) -e finalize
@@ -188,6 +191,10 @@ $(BUILD_DIRECTORIES):
 $(OBJECT_DIRECTORY)/%.o: %.c
 	@echo Compiling file: $(notdir $<)
 	$(NO_ECHO)$(CC) $(CFLAGS) $(INC_PATHS) -c -o $@ $<
+
+$(OBJECT_DIRECTORY)/%.d: %.c
+	@echo Dumping defines for file: $(notdir $<)
+	$(NO_ECHO)$(CC) $(CFLAGS) $(INC_PATHS) -c -dM -E $< | sort > $@
 
 # Assemble files
 $(OBJECT_DIRECTORY)/%.o: %.s
@@ -218,7 +225,7 @@ genbin:
 	$(NO_ECHO)$(OBJCOPY) -O binary $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).out $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).bin
 
 ## Create binary .hex file from the .out file
-genhex: 
+genhex:
 	@echo Preparing: $(OUTPUT_FILENAME).hex
 	$(NO_ECHO)$(OBJCOPY) -O ihex $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).out $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).hex
 
@@ -235,14 +242,14 @@ cleanobj:
 
 flash: $(MAKECMDGOALS)
 	@echo Flashing: $(OUTPUT_BINARY_DIRECTORY)/$<.hex
-	nrfjprog --program $(OUTPUT_BINARY_DIRECTORY)/$<.hex -f nrf51  --sectorerase
-	nrfjprog --reset
+#	nrfjprog --program $(OUTPUT_BINARY_DIRECTORY)/$<.hex -f nrf51  --sectorerase
+#	nrfjprog --reset
 
 ## Flash softdevice
 flash_softdevice:
 	@echo Flashing: s110_nrf51_8.0.0_softdevice.hex
-	nrfjprog --program ../../../../../../components/softdevice/s110/hex/s110_nrf51_8.0.0_softdevice.hex -f nrf51 --chiperase
-	nrfjprog --reset
+#	nrfjprog --program ../../../../../../components/softdevice/s110/hex/s110_nrf51_8.0.0_softdevice.hex -f nrf51 --chiperase
+#	nrfjprog --reset
 
 concat:
 	srec_cat $(SDK_PATH)/components/softdevice/s110/hex/s110_nrf51_8.0.0_softdevice.hex -intel $(OUTPUT_BINARY_DIRECTORY)/nrf51422_xxac_s110.hex -intel -o concat.hex -intel --line-length=44
