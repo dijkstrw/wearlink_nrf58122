@@ -62,8 +62,8 @@
 #define UART_TX_BUF_SIZE 2560                                                            /**< UART TX buffer size. */
 #define UART_RX_BUF_SIZE 1                                                              /**< UART RX buffer size. */
 
-#define VOLDOWN_BUTTON                   BUTTON_1
-#define VOLUP_BUTTON                     BUTTON_0
+#define VOLDOWN_BUTTON                   BSP_BUTTON_1
+#define VOLUP_BUTTON                     BSP_BUTTON_0
 #define BUTTON_DETECTION_DELAY           APP_TIMER_TICKS(50, APP_TIMER_PRESCALER)       /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
 #define KEY_PRESS_BUTTON_ID              0                                              /**< Button used as Keyboard key press. */
 #define SHIFT_BUTTON_ID                  1                                              /**< Button used as 'SHIFT' Key. */
@@ -1144,6 +1144,7 @@ static void scheduler_init(void)
 static void bsp_event_handler(bsp_event_t event)
 {
     uint32_t err_code;
+    app_trace_log("bsp event handler %8x\n\r", event);
     switch (event)
     {
         case BSP_EVENT_SLEEP:
@@ -1166,37 +1167,57 @@ static void bsp_event_handler(bsp_event_t event)
             }
             break;
 
-        case BSP_EVENT_KEY_0:
-            if (m_conn_handle != BLE_CONN_HANDLE_INVALID)
-            {
-                app_trace_log("Sending CONSUMER_CTRL_VOL_DW");
-                consumer_control_send(CONSUMER_CTRL_VOL_DW);
-            }
-            break;
-
-        case BSP_EVENT_KEY_1:
-            if (m_conn_handle != BLE_CONN_HANDLE_INVALID)
-            {
-                app_trace_log("Sending CONSUMER_CTRL_VOL_UP");
-                consumer_control_send(CONSUMER_CTRL_VOL_UP);
-                break;
-            }
-            break;
-
-        case BSP_EVENT_NOTHING:
-            if (m_conn_handle != BLE_CONN_HANDLE_INVALID)
-            {
-                APP_ERROR_CHECK(consumer_control_send(RELEASE_KEY));
-                app_trace_log("Sending RELEASE_KEY");
-                break;
-            }
-            break;
-
     default:
             break;
     }
 }
 
+static void button_event_handler(uint8_t pin, uint8_t button_action)
+{
+    if (button_action == APP_BUTTON_PUSH)
+    {
+        switch (pin) {
+        case VOLDOWN_BUTTON:
+            app_trace_log("Sending CONSUMER_CTRL_VOL_DW");
+            APP_ERROR_CHECK(consumer_control_send(CONSUMER_CTRL_VOL_DW));
+            break;
+
+        case VOLUP_BUTTON:
+            app_trace_log("Sending CONSUMER_CTRL_VOL_UP");
+            APP_ERROR_CHECK(consumer_control_send(CONSUMER_CTRL_VOL_UP));
+            break;
+
+        default:
+            APP_ERROR_HANDLER(pin);
+            break;
+        }
+    } else if (button_action == APP_BUTTON_RELEASE)
+    {
+        switch (pin) {
+        case VOLDOWN_BUTTON:
+        case VOLUP_BUTTON:
+            APP_ERROR_CHECK(consumer_control_send(RELEASE_KEY));
+            app_trace_log("Sending RELEASE_KEY");
+            break;
+
+        default:
+            APP_ERROR_HANDLER(pin);
+            break;
+        }
+    }
+}
+
+
+static void buttons_init(void)
+{
+    static app_button_cfg_t buttons[] =
+    {
+        {VOLDOWN_BUTTON,            false, BUTTON_PULL, button_event_handler},
+        {VOLUP_BUTTON,              false, BUTTON_PULL, button_event_handler}
+    };
+
+    app_button_init(buttons, sizeof(buttons) / sizeof(buttons[0]), BUTTON_DETECTION_DELAY);
+}
 
 /**@brief Function for initializing the Advertising functionality.
  */
@@ -1329,6 +1350,8 @@ int main(void)
     app_trace_init();
     timers_init();
     buttons_leds_init(&erase_bonds);
+
+    buttons_init();
 
     ble_stack_init();
     scheduler_init();
