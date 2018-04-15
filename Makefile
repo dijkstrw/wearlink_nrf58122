@@ -56,6 +56,7 @@ $(SDK_PATH)/components/drivers_nrf/common/nrf_drv_common.c \
 $(SDK_PATH)/components/drivers_nrf/gpiote/nrf_drv_gpiote.c \
 $(SDK_PATH)/components/drivers_nrf/uart/nrf_drv_uart.c \
 $(SDK_PATH)/components/drivers_nrf/pstorage/pstorage.c \
+$(SDK_PATH)/components/drivers_nrf/hal/nrf_adc.c \
 $(PROJECT_PATH)/main.c \
 $(SDK_PATH)/components/ble/common/ble_advdata.c \
 $(SDK_PATH)/components/ble/ble_advertising/ble_advertising.c \

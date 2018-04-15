@@ -1,3 +1,11 @@
+/* Copyright (c) 2018 Willem Dijkstra. All Rights Reserved.
+ *
+ * Consumer keys (media keys) using nrf51822 and Nordic SDK 10.0.0
+ *
+ * based on Nordic's ble_sdk_app_hids_keyboard_main sample file.
+ *
+ */
+
 /* Copyright (c) 2012 Nordic Semiconductor. All Rights Reserved.
  *
  * The information contained herein is property of Nordic Semiconductor ASA.
@@ -10,26 +18,11 @@
  *
  */
 
-/** @file
- *
- * @defgroup ble_sdk_app_hids_keyboard_main main.c
- * @{
- * @ingroup ble_sdk_app_hids_keyboard
- * @brief HID Keyboard Sample Application main file.
- *
- * This file contains is the source code for a sample application using the HID, Battery and Device
- * Information Services for implementing a simple keyboard functionality.
- * Pressing Button 0 will send text 'hello' to the connected peer. On receiving output report,
- * it toggles the state of LED 2 on the mother board based on whether or not Caps Lock is on.
- * This application uses the @ref app_scheduler.
- *
- * Also it would accept pairing requests from any peer device.
- */
-
 #include <stdint.h>
 #include <string.h>
 #include "nordic_common.h"
 #include "nrf.h"
+#include "nrf_adc.h"
 #include "nrf_assert.h"
 #include "app_error.h"
 #include "nrf_gpio.h"
@@ -65,8 +58,6 @@
 #define VOLDOWN_BUTTON                   BSP_BUTTON_1
 #define VOLUP_BUTTON                     BSP_BUTTON_0
 #define BUTTON_DETECTION_DELAY           APP_TIMER_TICKS(50, APP_TIMER_PRESCALER)       /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
-#define KEY_PRESS_BUTTON_ID              0                                              /**< Button used as Keyboard key press. */
-#define SHIFT_BUTTON_ID                  1                                              /**< Button used as 'SHIFT' Key. */
 
 #define INPUT_CCONTROL_KEYS_INDEX	 0
 #define INPUT_CC_REP_REF_ID	         1
@@ -82,6 +73,8 @@
 #define MIN_BATTERY_LEVEL                81                                             /**< Minimum simulated battery level. */
 #define MAX_BATTERY_LEVEL                100                                            /**< Maximum simulated battery level. */
 #define BATTERY_LEVEL_INCREMENT          1                                              /**< Increment between each simulated battery level measurement. */
+
+#define ADC_MEAS_INTERVAL                APP_TIMER_TICKS(500, APP_TIMER_PRESCALER)
 
 #define PNP_ID_VENDOR_ID_SOURCE          0x02                                           /**< Vendor ID Source. */
 #define PNP_ID_VENDOR_ID                 0x1915                                         /**< Vendor ID. */
@@ -110,30 +103,15 @@
 #define SEC_PARAM_MIN_KEY_SIZE           7                                              /**< Minimum encryption key size. */
 #define SEC_PARAM_MAX_KEY_SIZE           16                                             /**< Maximum encryption key size. */
 
-#define OUTPUT_REPORT_INDEX              0                                              /**< Index of Output Report. */
-#define OUTPUT_REPORT_MAX_LEN            1                                              /**< Maximum length of Output Report. */
-#define INPUT_REPORT_KEYS_INDEX	 0
-
-#define OUTPUT_REPORT_BIT_MASK_CAPS_LOCK 0x02                                           /**< CAPS LOCK bit in Output Report (based on 'LED Page (0x08)' of the Universal Serial Bus HID Usage Tables). */
-#define INPUT_REP_REF_ID                 1                                              /**< Id of reference to Keyboard Input Report. */
-#define OUTPUT_REP_REF_ID                0                                              /**< Id of reference to Keyboard Output Report. */
-
 #define APP_FEATURE_NOT_SUPPORTED       BLE_GATT_STATUS_ATTERR_APP_BEGIN + 2            /**< Reply when unsupported features are requested. */
 
 #define BASE_USB_HID_SPEC_VERSION        0x0101                                         /**< Version number of base USB HID Specification implemented by this application. */
-
-#define INPUT_REPORT_KEYS_MAX_LEN        8                                              /**< Maximum length of the Input Report characteristic. */
 
 #define DEAD_BEEF                        0xDEADBEEF                                     /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
 #define SCHED_MAX_EVENT_DATA_SIZE        MAX(APP_TIMER_SCHED_EVT_SIZE,\
                                              BLE_STACK_HANDLER_SCHED_EVT_SIZE)          /**< Maximum size of scheduler events. */
 #define SCHED_QUEUE_SIZE                 10                                             /**< Maximum number of events in the scheduler queue. */
-
-#define MODIFIER_KEY_POS                 0                                              /**< Position of the modifier byte in the Input Report. */
-#define SCAN_CODE_POS                    2                                              /**< This macro indicates the start position of the key scan code in a HID Report. As per the document titled 'Device Class Definition for Human Interface Devices (HID) V1.11, each report shall have one modifier byte followed by a reserved constant byte and then the key scan code. */
-
-#define MAX_KEYS_IN_ONE_REPORT           (INPUT_REPORT_KEYS_MAX_LEN - SCAN_CODE_POS)    /**< Maximum number of key presses that can be sent in one Input Report. */
 
 
 typedef enum
@@ -148,13 +126,15 @@ typedef enum
 
 static ble_hids_t                        m_hids;                                        /**< Structure used to identify the HID service. */
 static ble_bas_t                         m_bas;                                         /**< Structure used to identify the battery service. */
-static bool                              m_in_boot_mode = false;                        /**< Current protocol mode. */
+
 static uint16_t                          m_conn_handle = BLE_CONN_HANDLE_INVALID;       /**< Handle of the current connection. */
 
 static sensorsim_cfg_t                   m_battery_sim_cfg;                             /**< Battery Level sensor simulator configuration. */
 static sensorsim_state_t                 m_battery_sim_state;                           /**< Battery Level sensor simulator state. */
 
 APP_TIMER_DEF(m_battery_timer_id);                                                      /**< Battery timer. */
+
+APP_TIMER_DEF(m_adc_timer_id);
 
 static dm_application_instance_t         m_app_handle;                                  /**< Application identifier allocated by device manager. */
 static dm_handle_t                       m_bonded_peer_handle;                          /**< Device reference handle to the current bonded central. */
@@ -175,7 +155,10 @@ typedef enum
     CONSUMER_CTRL_AC_BACK           = 0x80,
 } consumer_control_t;
 
+volatile int32_t adc_sample;
+
 static void on_hids_evt(ble_hids_t * p_hids, ble_hids_evt_t * p_evt);
+static void adc_timeout_handler(void *p_context);
 
 /**@brief Callback function for asserts in the SoftDevice.
  *
@@ -266,6 +249,12 @@ static void timers_init(void)
     err_code = app_timer_create(&m_battery_timer_id,
                                 APP_TIMER_MODE_REPEATED,
                                 battery_level_meas_timeout_handler);
+    APP_ERROR_CHECK(err_code);
+
+    // Create adc timer
+    err_code = app_timer_create(&m_adc_timer_id,
+                                APP_TIMER_MODE_REPEATED,
+                                adc_timeout_handler);
     APP_ERROR_CHECK(err_code);
 }
 
@@ -512,41 +501,15 @@ static void timers_start(void)
 
     err_code = app_timer_start(m_battery_timer_id, BATTERY_LEVEL_MEAS_INTERVAL, NULL);
     APP_ERROR_CHECK(err_code);
+
+    err_code = app_timer_start(m_adc_timer_id, ADC_MEAS_INTERVAL, NULL);
+    APP_ERROR_CHECK(err_code);
 }
 
 static uint32_t consumer_control_send(consumer_control_t cmd)
 {
     return ble_hids_inp_rep_send(&m_hids, INPUT_CCONTROL_KEYS_INDEX, INPUT_CC_REPORT_KEYS_MAX_LEN, (uint8_t*)&cmd);
 }
-
-/**@brief Function for handling the HID Report Characteristic Write event.
- *
- * @param[in]   p_evt   HID service event.
- */
-static void on_hid_rep_char_write(ble_hids_evt_t *p_evt)
-{
-    if (p_evt->params.char_write.char_id.rep_type == BLE_HIDS_REP_TYPE_OUTPUT)
-    {
-        uint32_t err_code;
-        uint8_t  report_val;
-        uint8_t  report_index = p_evt->params.char_write.char_id.rep_index;
-
-        if (report_index == OUTPUT_REPORT_INDEX)
-        {
-            // This code assumes that the outptu report is one byte long. Hence the following
-            // static assert is made.
-            STATIC_ASSERT(OUTPUT_REPORT_MAX_LEN == 1);
-
-            err_code = ble_hids_outp_rep_get(&m_hids,
-                                             report_index,
-                                             OUTPUT_REPORT_MAX_LEN,
-                                             0,
-                                             &report_val);
-            APP_ERROR_CHECK(err_code);
-        }
-    }
-}
-
 
 /**@brief Function for putting the chip into sleep mode.
  *
@@ -577,18 +540,6 @@ static void sleep_mode_enter(void)
 static void on_hids_evt(ble_hids_t * p_hids, ble_hids_evt_t *p_evt)
 {
     switch (p_evt->evt_type) {
-    case BLE_HIDS_EVT_BOOT_MODE_ENTERED:
-        m_in_boot_mode = true;
-        break;
-
-    case BLE_HIDS_EVT_REPORT_MODE_ENTERED:
-        m_in_boot_mode = false;
-        break;
-
-    case BLE_HIDS_EVT_REP_CHAR_WRITE:
-        on_hid_rep_char_write(p_evt);
-        break;
-
     case BLE_HIDS_EVT_NOTIF_ENABLED:
     {
         dm_service_context_t   service_context;
@@ -596,38 +547,7 @@ static void on_hids_evt(ble_hids_t * p_hids, ble_hids_evt_t *p_evt)
         service_context.context_data.len = 0;
         service_context.context_data.p_data = NULL;
 
-        if (m_in_boot_mode)
-        {
-            // Protocol mode is Boot Protocol mode.
-            if (
-                p_evt->params.notification.char_id.uuid
-                ==
-                BLE_UUID_BOOT_KEYBOARD_INPUT_REPORT_CHAR
-                )
-            {
-                // The notification of boot keyboard input report has been enabled.
-                // Save the system attribute (CCCD) information into the flash.
-                uint32_t err_code;
-
-                err_code = dm_service_context_set(&m_bonded_peer_handle, &service_context);
-                if (err_code != NRF_ERROR_INVALID_STATE)
-                {
-                    APP_ERROR_CHECK(err_code);
-                }
-                else
-                {
-                    // The system attributes could not be written to the flash because
-                    // the connected central is not a new central. The system attributes
-                    // will only be written to flash only when disconnected from this central.
-                    // Do nothing now.
-                }
-            }
-            else
-            {
-                // Do nothing.
-            }
-        }
-        else if (p_evt->params.notification.char_id.rep_type == BLE_HIDS_REP_TYPE_INPUT)
+        if (p_evt->params.notification.char_id.rep_type == BLE_HIDS_REP_TYPE_INPUT)
         {
             // The protocol mode is Report Protocol mode. And the CCCD for the input report
             // is changed. It is now time to store all the CCCD information (system
@@ -723,13 +643,11 @@ static void on_adv_evt(ble_adv_evt_t ble_adv_evt)
             // Only Give peer address if we have a handle to the bonded peer.
             if(m_bonded_peer_handle.appl_id != DM_INVALID_ID)
             {
-                            
                 err_code = dm_peer_addr_get(&m_bonded_peer_handle, &peer_address);
                 APP_ERROR_CHECK(err_code);
 
                 err_code = ble_advertising_peer_addr_reply(&peer_address);
                 APP_ERROR_CHECK(err_code);
-                
             }
             break;
         }
@@ -862,12 +780,9 @@ static void ble_stack_init(void)
     // Initialize the SoftDevice handler module.
     SOFTDEVICE_HANDLER_APPSH_INIT(NRF_CLOCK_LFCLKSRC_XTAL_20_PPM, true);
 
-    // Enable BLE stack 
+    // Enable BLE stack
     ble_enable_params_t ble_enable_params;
     memset(&ble_enable_params, 0, sizeof(ble_enable_params));
-#if (defined(S130) || defined(S132))
-    ble_enable_params.gatts_enable_params.attr_tab_size   = BLE_GATTS_ATTR_TAB_SIZE_DEFAULT;
-#endif
     ble_enable_params.gatts_enable_params.service_changed = IS_SRVC_CHANGED_CHARACT_PRESENT;
     err_code = sd_ble_enable(&ble_enable_params);
     APP_ERROR_CHECK(err_code);
@@ -1040,14 +955,14 @@ static void device_manager_init(bool erase_bonds)
     // Initialize peer device handle.
     err_code = dm_handle_initialize(&m_bonded_peer_handle);
     APP_ERROR_CHECK(err_code);
-    
+
     // Initialize persistent storage module.
     err_code = pstorage_init();
     APP_ERROR_CHECK(err_code);
 
     err_code = dm_init(&init_param);
     APP_ERROR_CHECK(err_code);
-    
+
     memset(&register_param.sec_param, 0, sizeof(ble_gap_sec_params_t));
 
     register_param.sec_param.bond         = SEC_PARAM_BOND;
@@ -1091,6 +1006,36 @@ static void power_manage(void)
     APP_ERROR_CHECK(err_code);
 }
 
+static void adc_init(void) {
+    const nrf_adc_config_t nrf_adc_config = {
+        .resolution = NRF_ADC_CONFIG_RES_8BIT,
+        .scaling = NRF_ADC_CONFIG_SCALING_INPUT_ONE_THIRD,
+        .reference = NRF_ADC_CONFIG_REF_VBG
+    };
+
+    nrf_adc_configure((nrf_adc_config_t *)&nrf_adc_config);
+    nrf_adc_input_select(NRF_ADC_CONFIG_INPUT_2);
+    nrf_adc_int_enable(ADC_INTENSET_END_Enabled << ADC_INTENSET_END_Pos);
+    NVIC_SetPriority(ADC_IRQn, NRF_APP_PRIORITY_HIGH);
+    NVIC_EnableIRQ(ADC_IRQn);
+    adc_sample = -1;
+}
+
+void ADC_IRQHandler(void) {
+    nrf_adc_conversion_event_clean();
+
+    adc_sample = nrf_adc_result_get();
+}
+
+static void adc_timeout_handler(void *p_context)
+{
+    UNUSED_PARAMETER(p_context);
+
+    app_trace_log("adc %d\r\n", (int)adc_sample);
+
+    nrf_adc_start();
+}
+
 
 /**@brief Function for application main entry.
  */
@@ -1105,6 +1050,7 @@ int main(void)
     buttons_leds_init(&erase_bonds);
 
     buttons_init();
+    adc_init();
 
     ble_stack_init();
     scheduler_init();
