@@ -1,0 +1,5 @@
+source gdb-regview/gdb-regview.py
+regview load gdb-regview/defs/nrf51.xml
+file _build/nrf51422_xxac_s110.out
+target extended-remote | openocd -f openocd.cfg
+

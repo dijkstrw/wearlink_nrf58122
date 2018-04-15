@@ -1,7 +1,5 @@
 PROJECT_NAME := ble_app_hids_keyboard_s110_pca10001
 
-export OUTPUT_FILENAME
-#MAKEFILE_NAME := $(CURDIR)/$(word $(words $(MAKEFILE_LIST)),$(MAKEFILE_LIST))
 MAKEFILE_NAME := $(MAKEFILE_LIST)
 MAKEFILE_DIR := $(dir $(MAKEFILE_NAME))
 
@@ -11,6 +9,10 @@ TEMPLATE_PATH = $(SDK_PATH)/components/toolchain/gcc
 GNU_INSTALL_ROOT := /usr
 GNU_VERSION := 4.9.3
 GNU_PREFIX := arm-none-eabi
+
+OUTPUT_FILENAME := nrf51422_xxac_s110
+SOFTDEVICE_FILENAME := $(SDK_PATH)/components/softdevice/s110/hex/s110_nrf51_8.0.0_softdevice.hex
+export OUTPUT_FILENAME
 
 MK := mkdir
 RM := rm -rf
@@ -24,6 +26,7 @@ endif
 
 # Toolchain commands
 CC              := '$(GNU_INSTALL_ROOT)/bin/$(GNU_PREFIX)-gcc'
+GDB             := '$(GNU_INSTALL_ROOT)/bin/$(GNU_PREFIX)-gdb'
 AS              := '$(GNU_INSTALL_ROOT)/bin/$(GNU_PREFIX)-as'
 AR              := '$(GNU_INSTALL_ROOT)/bin/$(GNU_PREFIX)-ar' -r
 LD              := '$(GNU_INSTALL_ROOT)/bin/$(GNU_PREFIX)-ld'
@@ -175,7 +178,6 @@ vpath %.s $(ASM_PATHS)
 
 OBJECTS = $(C_OBJECTS) $(ASM_OBJECTS)
 
-nrf51422_xxac_s110: OUTPUT_FILENAME := nrf51422_xxac_s110
 nrf51422_xxac_s110: LINKER_SCRIPT=ble_app_hids_keyboard_gcc_nrf51.ld
 nrf51422_xxac_s110: $(BUILD_DIRECTORIES) $(OBJECTS) $(D_OBJECTS)
 	@echo Linking target: $(OUTPUT_FILENAME).out
@@ -240,17 +242,23 @@ clean:
 cleanobj:
 	$(RM) $(BUILD_DIRECTORIES)/*.o
 
-flash: $(MAKECMDGOALS)
-	@echo Flashing: $(OUTPUT_BINARY_DIRECTORY)/$<.hex
-#	nrfjprog --program $(OUTPUT_BINARY_DIRECTORY)/$<.hex -f nrf51  --sectorerase
-#	nrfjprog --reset
+flash:
+	@echo Flashing: $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).hex
+	openocd -f openocd-cli.cfg -c "init; program $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).hex verify; exit"
 
-## Flash softdevice
 flash_softdevice:
 	@echo Flashing: s110_nrf51_8.0.0_softdevice.hex
-#	nrfjprog --program ../../../../../../components/softdevice/s110/hex/s110_nrf51_8.0.0_softdevice.hex -f nrf51 --chiperase
-#	nrfjprog --reset
+	openocd -f openocd-cli.cfg -c "init; program $(SOFTDEVICE_FILENAME) verify; exit"
 
 concat:
-	srec_cat $(SDK_PATH)/components/softdevice/s110/hex/s110_nrf51_8.0.0_softdevice.hex -intel $(OUTPUT_BINARY_DIRECTORY)/nrf51422_xxac_s110.hex -intel -o concat.hex -intel --line-length=44
+	srec_cat $(SOFTDEVICE_FILENAME) -intel $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).hex -intel -o $(OUTPUT_BINARY_DIRECTORY)/concat.hex -intel --line-length=44
 
+flash_all:
+	@echo Flashing: all
+	openocd -f openocd-cli.cfg -c "init; program $(OUTPUT_BINARY_DIRECTORY)/concat.hex verify; exit"
+
+.gdb_config_oocd:
+	echo -e > .gdb_config_oocd "source gdb-regview/gdb-regview.py\nregview load gdb-regview/defs/nrf51.xml\nfile $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).out\ntarget extended-remote | openocd -f openocd.cfg\n"
+
+debug: .gdb_config_oocd
+	$(GDB) --command=.gdb_config_oocd
