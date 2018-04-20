@@ -24,8 +24,9 @@
 #include "nrf.h"
 #include "nrf_adc.h"
 #include "nrf_assert.h"
-#include "app_error.h"
 #include "nrf_gpio.h"
+#include "nrf_drv_gpiote.h"
+#include "app_error.h"
 #include "ble.h"
 #include "ble_hci.h"
 #include "ble_srv_common.h"
@@ -115,7 +116,7 @@
 
 #define KEYPAD_POWER_PIN                  2
 #define KEYPAD_ADC_PIN                    NRF_ADC_CONFIG_INPUT_2
-
+#define KEYPAD_SENSE_PIN                  4
 typedef enum
 {
     BLE_NO_ADV,               /**< No advertising running. */
@@ -1003,9 +1004,10 @@ static void power_manage(void)
     APP_ERROR_CHECK(err_code);
 }
 
+bool adc_active = false;
 static void adc_init(void) {
     const nrf_adc_config_t nrf_adc_config = {
-        .resolution = NRF_ADC_CONFIG_RES_9BIT,
+        .resolution = NRF_ADC_CONFIG_RES_10BIT,
         .scaling = NRF_ADC_CONFIG_SCALING_INPUT_ONE_THIRD,
         .reference = NRF_ADC_CONFIG_REF_VBG
     };
@@ -1017,26 +1019,64 @@ static void adc_init(void) {
     NVIC_EnableIRQ(ADC_IRQn);
     adc_sample = -1;
 }
+uint32_t sum;
+int8_t n;
 
 void ADC_IRQHandler(void) {
     nrf_adc_conversion_event_clean();
 
-    adc_sample = nrf_adc_result_get();
+    sum += nrf_adc_result_get();
+    n--;
+    if (n > 0) {
+        nrf_adc_start();
+    } else {
+        adc_sample = sum >> 3;
+        adc_active = false;
+    }
 }
 
 static void adc_timeout_handler(void *p_context)
 {
     UNUSED_PARAMETER(p_context);
 
-    app_trace_log("adc %d\r\n", (int)adc_sample);
-
-    nrf_adc_start();
+    if (adc_sample) {
+        app_trace_log("adc %d, %d, %d\r\n", (int)sum, (int)n, (int)adc_sample);
+        adc_sample = 0;
+    }
 }
 
 static void keypad_power_init(void)
 {
     nrf_gpio_cfg_output(KEYPAD_POWER_PIN);
     nrf_gpio_pin_set(KEYPAD_POWER_PIN);
+}
+
+static void
+keypad_sensed_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
+{
+    uint8_t polarity = nrf_gpio_pins_read() & (1 << pin);
+
+    if (polarity) {
+        app_trace_log("key down sensed\r\n");
+        if (!adc_active) {
+            sum = 0;
+            n = 7;
+            nrf_adc_start();
+            adc_active = true;
+        }
+    } else {
+        app_trace_log("key release sensed\r\n");
+    }
+}
+
+static void keypad_keypress_detection_init(void)
+{
+    uint32_t err_code;
+    nrf_drv_gpiote_in_config_t config = GPIOTE_CONFIG_IN_SENSE_TOGGLE(false);
+
+    err_code = nrf_drv_gpiote_in_init(KEYPAD_SENSE_PIN, &config, keypad_sensed_handler);
+    APP_ERROR_CHECK(err_code);
+    nrf_drv_gpiote_in_event_enable(KEYPAD_SENSE_PIN, false);
 }
 
 /**@brief Function for application main entry.
@@ -1054,6 +1094,7 @@ int main(void)
     keypad_power_init();
     buttons_init();
     adc_init();
+    keypad_keypress_detection_init();
 
     ble_stack_init();
     scheduler_init();
