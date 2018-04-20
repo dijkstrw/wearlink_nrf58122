@@ -113,6 +113,8 @@
                                              BLE_STACK_HANDLER_SCHED_EVT_SIZE)          /**< Maximum size of scheduler events. */
 #define SCHED_QUEUE_SIZE                 10                                             /**< Maximum number of events in the scheduler queue. */
 
+#define KEYPAD_POWER_PIN                  2
+#define KEYPAD_ADC_PIN                    NRF_ADC_CONFIG_INPUT_2
 
 typedef enum
 {
@@ -138,7 +140,7 @@ APP_TIMER_DEF(m_adc_timer_id);
 
 static dm_application_instance_t         m_app_handle;                                  /**< Application identifier allocated by device manager. */
 static dm_handle_t                       m_bonded_peer_handle;                          /**< Device reference handle to the current bonded central. */
-static bool                              m_caps_on = false;                             /**< Variable to indicate if Caps Lock is turned on. */
+
 
 static ble_uuid_t m_adv_uuids[] = {{BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE, BLE_UUID_TYPE_BLE}};
 
@@ -680,11 +682,6 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
 
         case BLE_GAP_EVT_DISCONNECTED:
             m_conn_handle = BLE_CONN_HANDLE_INVALID;
-
-            // Reset m_caps_on variable. Upon reconnect, the HID host will re-send the Output 
-            // report containing the Caps lock state.
-            m_caps_on = false;
-            // disabling alert 3. signal - used for capslock ON
             err_code = bsp_indication_set(BSP_INDICATE_ALERT_OFF);
             APP_ERROR_CHECK(err_code);
             break;
@@ -1008,13 +1005,13 @@ static void power_manage(void)
 
 static void adc_init(void) {
     const nrf_adc_config_t nrf_adc_config = {
-        .resolution = NRF_ADC_CONFIG_RES_8BIT,
+        .resolution = NRF_ADC_CONFIG_RES_9BIT,
         .scaling = NRF_ADC_CONFIG_SCALING_INPUT_ONE_THIRD,
         .reference = NRF_ADC_CONFIG_REF_VBG
     };
 
     nrf_adc_configure((nrf_adc_config_t *)&nrf_adc_config);
-    nrf_adc_input_select(NRF_ADC_CONFIG_INPUT_2);
+    nrf_adc_input_select(KEYPAD_ADC_PIN);
     nrf_adc_int_enable(ADC_INTENSET_END_Enabled << ADC_INTENSET_END_Pos);
     NVIC_SetPriority(ADC_IRQn, NRF_APP_PRIORITY_HIGH);
     NVIC_EnableIRQ(ADC_IRQn);
@@ -1036,6 +1033,11 @@ static void adc_timeout_handler(void *p_context)
     nrf_adc_start();
 }
 
+static void keypad_power_init(void)
+{
+    nrf_gpio_cfg_output(KEYPAD_POWER_PIN);
+    nrf_gpio_pin_set(KEYPAD_POWER_PIN);
+}
 
 /**@brief Function for application main entry.
  */
@@ -1049,6 +1051,7 @@ int main(void)
     timers_init();
     buttons_leds_init(&erase_bonds);
 
+    keypad_power_init();
     buttons_init();
     adc_init();
 
