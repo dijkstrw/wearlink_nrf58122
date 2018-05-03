@@ -47,9 +47,6 @@
 #include "pstorage.h"
 #include "app_trace.h"
 
-#if BUTTONS_NUMBER <2
-#error "Not enough resources on board"
-#endif
 
 #define IS_SRVC_CHANGED_CHARACT_PRESENT  0                                              /**< Include or not the service_changed characteristic. if not enabled, the server's database cannot be changed for the lifetime of the device*/
 
@@ -162,6 +159,17 @@ volatile int32_t adc_sample;
 
 static void on_hids_evt(ble_hids_t * p_hids, ble_hids_evt_t * p_evt);
 static void adc_timeout_handler(void *p_context);
+
+/*
+ * Fibretronics wearlink is a string of push button (no) switches individually
+ * in series with a resistor. When no button is pressed it is open
+ * circuit. When one button is pressed, the resistance corresponding to that
+ * key is present between the two feed wires.
+ *
+ * To determine the value for the adc we calculate ideal adc reading based on
+ * the known/measured resistance per button.
+ *
+ */
 
 /**@brief Callback function for asserts in the SoftDevice.
  *
@@ -1007,7 +1015,7 @@ static void power_manage(void)
 bool adc_active = false;
 static void adc_init(void) {
     const nrf_adc_config_t nrf_adc_config = {
-        .resolution = NRF_ADC_CONFIG_RES_10BIT,
+        .resolution = NRF_ADC_CONFIG_RES_8BIT,
         .scaling = NRF_ADC_CONFIG_SCALING_INPUT_ONE_THIRD,
         .reference = NRF_ADC_CONFIG_REF_VBG
     };
@@ -1025,30 +1033,30 @@ int8_t n;
 void ADC_IRQHandler(void) {
     nrf_adc_conversion_event_clean();
 
-    sum += nrf_adc_result_get();
+    adc_sample = nrf_adc_result_get();
+    adc_active = false;
+
+    /*sum += nrf_adc_result_get();
     n--;
-    if (n > 0) {
-        nrf_adc_start();
-    } else {
         adc_sample = sum >> 3;
         adc_active = false;
-    }
+        }*/
 }
 
 static void adc_timeout_handler(void *p_context)
 {
     UNUSED_PARAMETER(p_context);
 
-    if (adc_sample) {
-        app_trace_log("adc %d, %d, %d\r\n", (int)sum, (int)n, (int)adc_sample);
-        adc_sample = 0;
-    }
+    app_trace_log("adc %d, %d, %d\r\n", (int)sum, (int)n, (int)adc_sample);
+
+    nrf_adc_start();
 }
 
 static void keypad_power_init(void)
 {
     nrf_gpio_cfg_output(KEYPAD_POWER_PIN);
     nrf_gpio_pin_set(KEYPAD_POWER_PIN);
+    nrf_adc_start();
 }
 
 static void
@@ -1060,7 +1068,7 @@ keypad_sensed_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
         app_trace_log("key down sensed\r\n");
         if (!adc_active) {
             sum = 0;
-            n = 7;
+            n = 8;
             nrf_adc_start();
             adc_active = true;
         }
