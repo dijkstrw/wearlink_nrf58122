@@ -82,7 +82,7 @@
 #define APP_ADV_FAST_INTERVAL            0x0028                                         /**< Fast advertising interval (in units of 0.625 ms. This value corresponds to 25 ms.). */
 #define APP_ADV_SLOW_INTERVAL            0x0C80                                         /**< Slow advertising interval (in units of 0.625 ms. This value corrsponds to 2 seconds). */
 #define APP_ADV_FAST_TIMEOUT             30                                             /**< The duration of the fast advertising period (in seconds). */
-#define APP_ADV_SLOW_TIMEOUT             180                                            /**< The duration of the slow advertising period (in seconds). */
+#define APP_ADV_SLOW_TIMEOUT             30                                             /**< The duration of the slow advertising period (in seconds). */
 
 /*lint -emacro(524, MIN_CONN_INTERVAL) // Loss of precision */
 #define MIN_CONN_INTERVAL                MSEC_TO_UNITS(7.5, UNIT_1_25_MS)               /**< Minimum connection interval (7.5 ms) */
@@ -428,7 +428,6 @@ static void hids_init(void)
     ble_hids_inp_rep_init_t    input_report_array[1];
     ble_hids_inp_rep_init_t  * p_input_report;
     ble_hids_outp_rep_init_t   output_report_array[1];
-//    ble_hids_outp_rep_init_t * p_output_report;
     uint8_t                    hid_info_flags;
 
     memset((void *)input_report_array, 0, sizeof(ble_hids_inp_rep_init_t));
@@ -594,12 +593,12 @@ static void sleep_mode_enter(void)
     APP_ERROR_CHECK(err_code);
 
     // Prepare wakeup buttons.
-//    err_code = bsp_btn_ble_sleep_mode_prepare();
-//    APP_ERROR_CHECK(err_code);
+    err_code = bsp_btn_ble_sleep_mode_prepare();
+    APP_ERROR_CHECK(err_code);
 
     // Go to system-off mode (this function will not return; wakeup will cause a reset).
-//    err_code = sd_power_system_off();
-//    APP_ERROR_CHECK(err_code);
+    err_code = sd_power_system_off();
+    APP_ERROR_CHECK(err_code);
 }
 
 
@@ -714,7 +713,8 @@ static void on_adv_evt(ble_adv_evt_t ble_adv_evt)
             ble_gap_addr_t peer_address;
 
             // Only Give peer address if we have a handle to the bonded peer.
-            if(m_bonded_peer_handle.appl_id != DM_INVALID_ID)
+            if ((m_bonded_peer_handle.appl_id != DM_INVALID_ID) &&
+                (m_bonded_peer_handle.service_id != DM_INVALID_ID))
             {
                 err_code = dm_peer_addr_get(&m_bonded_peer_handle, &peer_address);
                 APP_ERROR_CHECK(err_code);
@@ -1074,7 +1074,6 @@ static void power_manage(void)
     APP_ERROR_CHECK(err_code);
 }
 
-bool adc_active = false;
 static void adc_init(void) {
     const nrf_adc_config_t nrf_adc_config = {
         .resolution = NRF_ADC_CONFIG_RES_8BIT,
@@ -1094,7 +1093,6 @@ void ADC_IRQHandler(void) {
     nrf_adc_conversion_event_clean();
 
     adc_sample = nrf_adc_result_get();
-    adc_active = false;
 }
 
 static void adc_timeout_handler(void *p_context)
@@ -1117,7 +1115,6 @@ static void keypad_power_init(void)
 {
     nrf_gpio_cfg_output(KEYPAD_POWER_PIN);
     nrf_gpio_pin_set(KEYPAD_POWER_PIN);
-    nrf_adc_start();
 }
 
 volatile uint8_t keydown = 0;
@@ -1130,7 +1127,6 @@ keypad_sensed_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
         app_trace_log("key down sensed\r\n");
         nrf_adc_start();
         app_timer_start(m_adc_timer_id, ADC_MEAS_INTERVAL, NULL);
-        adc_active = true;
     } else {
         app_trace_log("key release sensed\r\n");
         consumer_control_send(RELEASE_KEY);
@@ -1182,7 +1178,7 @@ int main(void)
     for (;;)
     {
         app_sched_execute();
-//        power_manage();
+        power_manage();
     }
 }
 
