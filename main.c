@@ -72,7 +72,7 @@
 #define MAX_BATTERY_LEVEL                100                                            /**< Maximum simulated battery level. */
 #define BATTERY_LEVEL_INCREMENT          1                                              /**< Increment between each simulated battery level measurement. */
 
-#define ADC_MEAS_INTERVAL                APP_TIMER_TICKS(500, APP_TIMER_PRESCALER)
+#define ADC_MEAS_INTERVAL                APP_TIMER_TICKS(30, APP_TIMER_PRESCALER)
 
 #define PNP_ID_VENDOR_ID_SOURCE          0x02                                           /**< Vendor ID Source. */
 #define PNP_ID_VENDOR_ID                 0x1915                                         /**< Vendor ID. */
@@ -114,6 +114,8 @@
 #define KEYPAD_POWER_PIN                  2
 #define KEYPAD_ADC_PIN                    NRF_ADC_CONFIG_INPUT_2
 #define KEYPAD_SENSE_PIN                  4
+#define KEYPAD_NUMKEYS                    5
+
 typedef enum
 {
     BLE_NO_ADV,               /**< No advertising running. */
@@ -142,6 +144,56 @@ static dm_handle_t                       m_bonded_peer_handle;                  
 
 static ble_uuid_t m_adv_uuids[] = {{BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE, BLE_UUID_TYPE_BLE}};
 
+/*
+  Fibretronics wearlink is a string of push button (no) switches individually
+  in series with a resistor. When no button is pressed it is open
+  circuit. When one button is pressed, the resistance corresponding to that
+  key is present between the two feed wires.
+
+  To determine the value for the adc we calculate ideal adc reading based on
+  the known/measured resistance per button.
+
+  Additional wrinkles;
+  - ADC reference is VBG = 1.2V
+  - ADC prescaling = 1/3
+  - ADC input impendance is ~390k
+  - ADC sampling time is 20us @ 8 bits, 68us @ 10 bit
+
+  Schematic:
+
+   Vcc--Rk---x----Rl--gnd
+             |
+            Ra
+             |
+           Vref/2
+
+   Where:
+   Rk = key resistance
+   Rl = limit or load resistance, makes a Rk + Rl load when not sampling
+   Ra = the adc impedance at sampling time
+   Ua = voltage at point x
+
+   Ik = Il + Ia = Vcc / Rk
+   Ia = (Ua - (Vref / 2)) / Rain
+   Il = Ua / Rl
+
+   Solve for Ua: Ua = (-Vcc - ((Vref / 2) / Ra)) / (-1 - (Rk / Ra) - (Rk / Rl))
+
+  #+ORGTBL: SEND keymarks orgtbl-to-generic :lstart "   { " :lend " }," :sep ", ", :skip 4 :skipcols (3 4 5 6 7)
+  | ! | Key                           |       Rk |         Uau |      Ua |   Vscaled |      Adc |   A-D% |    A+D% |
+  |   |                               |          |   unsampled | sampled |           |          |        |         |
+  |---+-------------------------------+----------+-------------+---------+-----------+----------+--------+---------|
+  | # | RELEASE_KEY                   | 10000000 |       0.007 |   0.036 |     0.012 |        3 |      3 |       3 |
+  | # | CONSUMER_CTRL_VOL_DW          |    10000 |       2.200 |   2.173 |     0.724 |      154 |    146 |     162 |
+  | # | CONSUMER_CTRL_SCAN_PREV_TRACK |    20000 |       1.650 |   1.624 |     0.541 |      115 |    109 |     121 |
+  | # | CONSUMER_CTRL_PLAY            |    47000 |       0.985 |   0.972 |     0.324 |       69 |     66 |      72 |
+  | # | CONSUMER_CTRL_SCAN_NEXT_TRACK |    30000 |       1.320 |   1.298 |     0.433 |       92 |     87 |      97 |
+  | # | CONSUMER_CTRL_VOL_UP          |     5600 |       2.578 |   2.556 |     0.852 |      182 |    173 |     191 |
+  |---+-------------------------------+----------+-------------+---------+-----------+----------+--------+---------|
+  | $ | Vcc=3.3                       | Rl=20000 | Rain=389200 |         | scale=1/3 | Vref=1.2 | bits=8 | dev=.05 |
+  #+TBLFM: $4=($Rl/($Rk+$Rl))*$Vcc;%.3f::$5=(-(($Vref/2)*$3)/$Rain-$Vcc)/((-$3/$Rain)-($3/$Rl)-1);%.3f::$6=$Ua*$scale;%.3f::$7=$Vscaled/($Vref/2^$bits);%.0f::$8=max($7-($dev*$7),0);%.0f::$9=min($7+($dev*$7),2^$bits);%0.f
+*/
+
 typedef enum
 {
     RELEASE_KEY                     = 0x00,
@@ -155,6 +207,19 @@ typedef enum
     CONSUMER_CTRL_AC_BACK           = 0x80,
 } consumer_control_t;
 
+const struct keymark {
+    uint8_t key;
+    uint8_t low;
+    uint8_t high;
+} keymark[KEYPAD_NUMKEYS] = {
+/* BEGIN RECEIVE ORGTBL keymarks */
+   { CONSUMER_CTRL_VOL_DW, 146, 162 },
+   { CONSUMER_CTRL_SCAN_PREV_TRACK, 109, 121 },
+   { CONSUMER_CTRL_PLAY, 66, 72 },
+   { CONSUMER_CTRL_SCAN_NEXT_TRACK, 87, 97 },
+   { CONSUMER_CTRL_VOL_UP, 173, 191 },
+/* END RECEIVE ORGTBL keymarks */
+};
 volatile int32_t adc_sample;
 
 static void on_hids_evt(ble_hids_t * p_hids, ble_hids_evt_t * p_evt);
@@ -264,7 +329,7 @@ static void timers_init(void)
 
     // Create adc timer
     err_code = app_timer_create(&m_adc_timer_id,
-                                APP_TIMER_MODE_REPEATED,
+                                APP_TIMER_MODE_SINGLE_SHOT,
                                 adc_timeout_handler);
     APP_ERROR_CHECK(err_code);
 }
@@ -511,9 +576,6 @@ static void timers_start(void)
     uint32_t err_code;
 
     err_code = app_timer_start(m_battery_timer_id, BATTERY_LEVEL_MEAS_INTERVAL, NULL);
-    APP_ERROR_CHECK(err_code);
-
-    err_code = app_timer_start(m_adc_timer_id, ADC_MEAS_INTERVAL, NULL);
     APP_ERROR_CHECK(err_code);
 }
 
@@ -1027,29 +1089,28 @@ static void adc_init(void) {
     NVIC_EnableIRQ(ADC_IRQn);
     adc_sample = -1;
 }
-uint32_t sum;
-int8_t n;
 
 void ADC_IRQHandler(void) {
     nrf_adc_conversion_event_clean();
 
     adc_sample = nrf_adc_result_get();
     adc_active = false;
-
-    /*sum += nrf_adc_result_get();
-    n--;
-        adc_sample = sum >> 3;
-        adc_active = false;
-        }*/
 }
 
 static void adc_timeout_handler(void *p_context)
 {
+    uint8_t i;
     UNUSED_PARAMETER(p_context);
 
-    app_trace_log("adc %d, %d, %d\r\n", (int)sum, (int)n, (int)adc_sample);
-
-    nrf_adc_start();
+    app_trace_log("adc %d\r\n", (int)adc_sample);
+    for (i = 0; i < KEYPAD_NUMKEYS; i++) {
+        if ((keymark[i].low <= adc_sample) &&
+            (keymark[i].high >= adc_sample)) {
+            app_trace_log("cc key %d\r\n", keymark[i].key);
+            consumer_control_send(keymark[i].key);
+            break;
+        }
+    }
 }
 
 static void keypad_power_init(void)
@@ -1059,21 +1120,20 @@ static void keypad_power_init(void)
     nrf_adc_start();
 }
 
+volatile uint8_t keydown = 0;
+
 static void
 keypad_sensed_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 {
-    uint8_t polarity = nrf_gpio_pins_read() & (1 << pin);
-
-    if (polarity) {
+    keydown ^= 1;
+    if (keydown) {
         app_trace_log("key down sensed\r\n");
-        if (!adc_active) {
-            sum = 0;
-            n = 8;
-            nrf_adc_start();
-            adc_active = true;
-        }
+        nrf_adc_start();
+        app_timer_start(m_adc_timer_id, ADC_MEAS_INTERVAL, NULL);
+        adc_active = true;
     } else {
         app_trace_log("key release sensed\r\n");
+        consumer_control_send(RELEASE_KEY);
     }
 }
 
