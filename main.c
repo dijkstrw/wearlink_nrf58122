@@ -37,7 +37,6 @@
 #include "ble_dis.h"
 #include "ble_conn_params.h"
 #include "bsp.h"
-#include "sensorsim.h"
 #include "bsp_btn_ble.h"
 #include "app_scheduler.h"
 #include "softdevice_handler_appsh.h"
@@ -67,10 +66,7 @@
 #define APP_TIMER_PRESCALER              0                                              /**< Value of the RTC1 PRESCALER register. */
 #define APP_TIMER_OP_QUEUE_SIZE          4                                              /**< Size of timer operation queues. */
 
-#define BATTERY_LEVEL_MEAS_INTERVAL      APP_TIMER_TICKS(2000, APP_TIMER_PRESCALER)     /**< Battery level measurement interval (ticks). */
-#define MIN_BATTERY_LEVEL                81                                             /**< Minimum simulated battery level. */
-#define MAX_BATTERY_LEVEL                100                                            /**< Maximum simulated battery level. */
-#define BATTERY_LEVEL_INCREMENT          1                                              /**< Increment between each simulated battery level measurement. */
+#define BATTERY_LEVEL_MEAS_INTERVAL      APP_TIMER_TICKS(200000, APP_TIMER_PRESCALER)     /**< Battery level measurement interval (ticks). */
 
 #define ADC_MEAS_INTERVAL                APP_TIMER_TICKS(30, APP_TIMER_PRESCALER)
 
@@ -126,13 +122,18 @@ typedef enum
     BLE_SLEEP,                /**< Go to system-off. */
 } ble_advertising_mode_t;
 
+typedef enum
+{
+    ADC_MODE_KEYPAD,          /* ADC is configured for keypad */
+    ADC_MODE_BATTERY,         /* ADC is configured to measure battery */
+} adc_mode_t;
+
+static adc_mode_t                        adc_mode;
+
 static ble_hids_t                        m_hids;                                        /**< Structure used to identify the HID service. */
 static ble_bas_t                         m_bas;                                         /**< Structure used to identify the battery service. */
 
 static uint16_t                          m_conn_handle = BLE_CONN_HANDLE_INVALID;       /**< Handle of the current connection. */
-
-static sensorsim_cfg_t                   m_battery_sim_cfg;                             /**< Battery Level sensor simulator configuration. */
-static sensorsim_state_t                 m_battery_sim_state;                           /**< Battery Level sensor simulator state. */
 
 APP_TIMER_DEF(m_battery_timer_id);                                                      /**< Battery timer. */
 
@@ -223,6 +224,7 @@ const struct keymark {
 volatile int32_t adc_sample;
 
 static void on_hids_evt(ble_hids_t * p_hids, ble_hids_evt_t * p_evt);
+static void adc_init(adc_mode_t mode_req);
 static void adc_timeout_handler(void *p_context);
 
 /*
@@ -276,27 +278,6 @@ static void ble_advertising_error_handler(uint32_t nrf_error)
 }
 
 
-/**@brief Function for performing a battery measurement, and update the Battery Level characteristic in the Battery Service.
- */
-static void battery_level_update(void)
-{
-    uint32_t err_code;
-    uint8_t  battery_level;
-
-    battery_level = (uint8_t)sensorsim_measure(&m_battery_sim_state, &m_battery_sim_cfg);
-
-    err_code = ble_bas_battery_level_update(&m_bas, battery_level);
-    if ((err_code != NRF_SUCCESS) &&
-        (err_code != NRF_ERROR_INVALID_STATE) &&
-        (err_code != BLE_ERROR_NO_TX_BUFFERS) &&
-        (err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
-    )
-    {
-        APP_ERROR_HANDLER(err_code);
-    }
-}
-
-
 /**@brief Function for handling the Battery measurement timer timeout.
  *
  * @details This function will be called each time the battery level measurement timer expires.
@@ -307,7 +288,12 @@ static void battery_level_update(void)
 static void battery_level_meas_timeout_handler(void * p_context)
 {
     UNUSED_PARAMETER(p_context);
-    battery_level_update();
+
+    if (! nrf_adc_is_busy()) {
+        adc_init(ADC_MODE_BATTERY);
+        nrf_adc_start();
+        app_timer_start(m_adc_timer_id, ADC_MEAS_INTERVAL, NULL);
+    }
 }
 
 /**@brief Function for the Timer initialization.
@@ -520,20 +506,6 @@ static void services_init(void)
     bas_init();
     hids_init();
 }
-
-
-/**@brief Function for initializing the battery sensor simulator.
- */
-static void sensor_simulator_init(void)
-{
-    m_battery_sim_cfg.min          = MIN_BATTERY_LEVEL;
-    m_battery_sim_cfg.max          = MAX_BATTERY_LEVEL;
-    m_battery_sim_cfg.incr         = BATTERY_LEVEL_INCREMENT;
-    m_battery_sim_cfg.start_at_max = true;
-
-    sensorsim_init(&m_battery_sim_state, &m_battery_sim_cfg);
-}
-
 
 /**@brief Function for handling a Connection Parameters error.
  *
@@ -1074,15 +1046,24 @@ static void power_manage(void)
     APP_ERROR_CHECK(err_code);
 }
 
-static void adc_init(void) {
-    const nrf_adc_config_t nrf_adc_config = {
+static void adc_init(adc_mode_t req_mode) {
+    nrf_adc_config_t nrf_adc_config = {
         .resolution = NRF_ADC_CONFIG_RES_8BIT,
-        .scaling = NRF_ADC_CONFIG_SCALING_INPUT_ONE_THIRD,
         .reference = NRF_ADC_CONFIG_REF_VBG
     };
 
-    nrf_adc_configure((nrf_adc_config_t *)&nrf_adc_config);
-    nrf_adc_input_select(KEYPAD_ADC_PIN);
+    NVIC_DisableIRQ(ADC_IRQn);
+    if (req_mode == ADC_MODE_KEYPAD) {
+        nrf_adc_config.scaling = NRF_ADC_CONFIG_SCALING_INPUT_ONE_THIRD;
+        nrf_adc_configure((nrf_adc_config_t *)&nrf_adc_config);
+        nrf_adc_input_select(KEYPAD_ADC_PIN);
+        adc_mode = ADC_MODE_KEYPAD;
+    } else {
+        nrf_adc_config.scaling = NRF_ADC_CONFIG_SCALING_SUPPLY_ONE_THIRD;
+        nrf_adc_configure((nrf_adc_config_t *)&nrf_adc_config);
+        nrf_adc_input_select(NRF_ADC_CONFIG_INPUT_DISABLED);
+        adc_mode = ADC_MODE_BATTERY;
+    }
     nrf_adc_int_enable(ADC_INTENSET_END_Enabled << ADC_INTENSET_END_Pos);
     NVIC_SetPriority(ADC_IRQn, NRF_APP_PRIORITY_HIGH);
     NVIC_EnableIRQ(ADC_IRQn);
@@ -1097,22 +1078,43 @@ void ADC_IRQHandler(void) {
 
 static void adc_timeout_handler(void *p_context)
 {
+    uint8_t battery_level;
     uint8_t i;
+    uint32_t err_code;
+
     UNUSED_PARAMETER(p_context);
 
     app_trace_log("adc %d\r\n", (int)adc_sample);
-    for (i = 0; i < KEYPAD_NUMKEYS; i++) {
-        if ((keymark[i].low <= adc_sample) &&
-            (keymark[i].high >= adc_sample)) {
-            app_trace_log("cc key %d\r\n", keymark[i].key);
-            consumer_control_send(keymark[i].key);
-            return;
-        }
-    }
 
-    /* no key matched, send release */
-    consumer_control_send(RELEASE_KEY);
-    app_trace_log("cc key release\r\n");
+    if (adc_mode == ADC_MODE_KEYPAD) {
+        for (i = 0; i < KEYPAD_NUMKEYS; i++) {
+            if ((keymark[i].low <= adc_sample) &&
+                (keymark[i].high >= adc_sample)) {
+                app_trace_log("cc key %d\r\n", keymark[i].key);
+                consumer_control_send(keymark[i].key);
+                return;
+            }
+        }
+
+        /* no key matched, send release */
+        consumer_control_send(RELEASE_KEY);
+        app_trace_log("cc key release\r\n");
+    } else {
+        battery_level = (adc_sample >> 1);
+        battery_level = (battery_level > 100)? 100 : adc_sample;
+        app_trace_log("battery level %d\r\n", battery_level);
+
+        err_code = ble_bas_battery_level_update(&m_bas, battery_level);
+        if ((err_code != NRF_SUCCESS) &&
+            (err_code != NRF_ERROR_INVALID_STATE) &&
+            (err_code != BLE_ERROR_NO_TX_BUFFERS) &&
+            (err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
+            )
+        {
+            APP_ERROR_HANDLER(err_code);
+        }
+        adc_init(ADC_MODE_KEYPAD);
+    }
 }
 
 static void keypad_power_init(void)
@@ -1125,8 +1127,10 @@ static void
 keypad_sensed_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 {
     app_trace_log("key change sensed\r\n");
-    nrf_adc_start();
-    app_timer_start(m_adc_timer_id, ADC_MEAS_INTERVAL, NULL);
+    if (adc_mode == ADC_MODE_KEYPAD) {
+        nrf_adc_start();
+        app_timer_start(m_adc_timer_id, ADC_MEAS_INTERVAL, NULL);
+    }
 }
 
 static void keypad_keypress_detection_init(void)
@@ -1153,7 +1157,7 @@ int main(void)
 
     keypad_power_init();
     buttons_init();
-    adc_init();
+    adc_init(ADC_MODE_KEYPAD);
     keypad_keypress_detection_init();
 
     ble_stack_init();
@@ -1162,7 +1166,6 @@ int main(void)
     gap_params_init();
     advertising_init();
     services_init();
-    sensor_simulator_init();
     conn_params_init();
 
     // Start execution.
