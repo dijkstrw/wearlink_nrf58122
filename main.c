@@ -112,7 +112,7 @@
 #define SCHED_QUEUE_SIZE                 10                                             /**< Maximum number of events in the scheduler queue. */
 
 #define KEYPAD_POWER_PIN                  2
-#define KEYPAD_ADC_PIN                    NRF_ADC_CONFIG_INPUT_2
+#define KEYPAD_ADC_PIN                    NRF_ADC_CONFIG_INPUT_2                        /**< Pin P0.01 */
 #define KEYPAD_SENSE_PIN                  4
 #define KEYPAD_NUMKEYS                    5
 
@@ -1106,9 +1106,13 @@ static void adc_timeout_handler(void *p_context)
             (keymark[i].high >= adc_sample)) {
             app_trace_log("cc key %d\r\n", keymark[i].key);
             consumer_control_send(keymark[i].key);
-            break;
+            return;
         }
     }
+
+    /* no key matched, send release */
+    consumer_control_send(RELEASE_KEY);
+    app_trace_log("cc key release\r\n");
 }
 
 static void keypad_power_init(void)
@@ -1117,20 +1121,12 @@ static void keypad_power_init(void)
     nrf_gpio_pin_set(KEYPAD_POWER_PIN);
 }
 
-volatile uint8_t keydown = 0;
-
 static void
 keypad_sensed_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 {
-    keydown ^= 1;
-    if (keydown) {
-        app_trace_log("key down sensed\r\n");
-        nrf_adc_start();
-        app_timer_start(m_adc_timer_id, ADC_MEAS_INTERVAL, NULL);
-    } else {
-        app_trace_log("key release sensed\r\n");
-        consumer_control_send(RELEASE_KEY);
-    }
+    app_trace_log("key change sensed\r\n");
+    nrf_adc_start();
+    app_timer_start(m_adc_timer_id, ADC_MEAS_INTERVAL, NULL);
 }
 
 static void keypad_keypress_detection_init(void)
