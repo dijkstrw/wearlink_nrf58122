@@ -42,18 +42,12 @@
 #include "softdevice_handler_appsh.h"
 #include "app_timer_appsh.h"
 #include "device_manager.h"
-#include "app_button.h"
 #include "pstorage.h"
 #include "app_trace.h"
 
 
 #define IS_SRVC_CHANGED_CHARACT_PRESENT  0                                              /**< Include or not the service_changed characteristic. if not enabled, the server's database cannot be changed for the lifetime of the device*/
 
-#define UART_TX_BUF_SIZE 2560                                                            /**< UART TX buffer size. */
-#define UART_RX_BUF_SIZE 1                                                              /**< UART RX buffer size. */
-
-#define VOLDOWN_BUTTON                   BSP_BUTTON_1
-#define VOLUP_BUTTON                     BSP_BUTTON_0
 #define BUTTON_DETECTION_DELAY           APP_TIMER_TICKS(50, APP_TIMER_PRESCALER)       /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
 
 #define INPUT_CCONTROL_KEYS_INDEX	 0
@@ -107,7 +101,6 @@
                                              BLE_STACK_HANDLER_SCHED_EVT_SIZE)          /**< Maximum size of scheduler events. */
 #define SCHED_QUEUE_SIZE                 10                                             /**< Maximum number of events in the scheduler queue. */
 
-#define KEYPAD_POWER_PIN                  2
 #define KEYPAD_ADC_PIN                    NRF_ADC_CONFIG_INPUT_2                        /**< Pin P0.01 */
 #define KEYPAD_SENSE_PIN                  4
 #define KEYPAD_NUMKEYS                    5
@@ -128,8 +121,6 @@ typedef enum
     ADC_MODE_BATTERY,         /* ADC is configured to measure battery */
 } adc_mode_t;
 
-static adc_mode_t                        adc_mode;
-
 static ble_hids_t                        m_hids;                                        /**< Structure used to identify the HID service. */
 static ble_bas_t                         m_bas;                                         /**< Structure used to identify the battery service. */
 
@@ -142,8 +133,11 @@ APP_TIMER_DEF(m_adc_timer_id);
 static dm_application_instance_t         m_app_handle;                                  /**< Application identifier allocated by device manager. */
 static dm_handle_t                       m_bonded_peer_handle;                          /**< Device reference handle to the current bonded central. */
 
-
 static ble_uuid_t m_adv_uuids[] = {{BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE, BLE_UUID_TYPE_BLE}};
+
+static adc_mode_t                        adc_mode;
+static uint8_t                           battery_level;
+static float                             battery_correction = 1.0;
 
 /*
   Fibretronics wearlink is a string of push button (no) switches individually
@@ -184,16 +178,22 @@ static ble_uuid_t m_adv_uuids[] = {{BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE, BLE
   | ! | Key                           |       Rk |         Uau |      Ua |   Vscaled |      Adc |   A-D% |    A+D% |
   |   |                               |          |   unsampled | sampled |           |          |        |         |
   |---+-------------------------------+----------+-------------+---------+-----------+----------+--------+---------|
-  | # | RELEASE_KEY                   | 10000000 |       0.007 |   0.036 |     0.012 |        3 |      3 |       3 |
-  | # | CONSUMER_CTRL_VOL_DW          |    10000 |       2.200 |   2.173 |     0.724 |      154 |    146 |     162 |
-  | # | CONSUMER_CTRL_SCAN_PREV_TRACK |    20000 |       1.650 |   1.624 |     0.541 |      115 |    109 |     121 |
-  | # | CONSUMER_CTRL_PLAY            |    47000 |       0.985 |   0.972 |     0.324 |       69 |     66 |      72 |
-  | # | CONSUMER_CTRL_SCAN_NEXT_TRACK |    30000 |       1.320 |   1.298 |     0.433 |       92 |     87 |      97 |
-  | # | CONSUMER_CTRL_VOL_UP          |     5600 |       2.578 |   2.556 |     0.852 |      182 |    173 |     191 |
+  | # | RELEASE_KEY                   | 10000000 |       0.005 |   0.034 |     0.011 |        2 |      2 |       2 |
+  | # | CONSUMER_CTRL_VOL_DW          |    10000 |       1.800 |   1.780 |     0.593 |      127 |    121 |     133 |
+  | # | CONSUMER_CTRL_SCAN_PREV_TRACK |    20000 |       1.350 |   1.331 |     0.444 |       95 |     90 |     100 |
+  | # | CONSUMER_CTRL_PLAY            |    47000 |       0.806 |   0.799 |     0.266 |       57 |     54 |      60 |
+  | # | CONSUMER_CTRL_SCAN_NEXT_TRACK |    30000 |       1.080 |   1.066 |     0.355 |       76 |     72 |      80 |
+  | # | CONSUMER_CTRL_VOL_UP          |     5600 |       2.109 |   2.093 |     0.698 |      149 |    142 |     156 |
   |---+-------------------------------+----------+-------------+---------+-----------+----------+--------+---------|
   | $ | Vcc=3.3                       | Rl=20000 | Rain=389200 |         | scale=1/3 | Vref=1.2 | bits=8 | dev=.05 |
   #+TBLFM: $4=($Rl/($Rk+$Rl))*$Vcc;%.3f::$5=(-(($Vref/2)*$3)/$Rain-$Vcc)/((-$3/$Rain)-($3/$Rl)-1);%.3f::$6=$Ua*$scale;%.3f::$7=$Vscaled/($Vref/2^$bits);%.0f::$8=max($7-($dev*$7),0);%.0f::$9=min($7+($dev*$7),2^$bits);%0.f
+
+  Note that the measurement is compared to the internal reference, and that the
+  supply voltage will slowly drop due to battery discharge. We take this into
+  account by adjusting the adc read voltage by a battery level correction.
 */
+
+#define ADC_BATTERY_3V3  (3.3/(3.6/(1<<8)))
 
 typedef enum
 {
@@ -880,53 +880,6 @@ static void bsp_event_handler(bsp_event_t event)
     }
 }
 
-static void button_event_handler(uint8_t pin, uint8_t button_action)
-{
-    if (button_action == APP_BUTTON_PUSH)
-    {
-        switch (pin) {
-        case VOLDOWN_BUTTON:
-            app_trace_log("Sending CONSUMER_CTRL_VOL_DW");
-            APP_ERROR_CHECK(consumer_control_send(CONSUMER_CTRL_VOL_DW));
-            break;
-
-        case VOLUP_BUTTON:
-            app_trace_log("Sending CONSUMER_CTRL_VOL_UP");
-            APP_ERROR_CHECK(consumer_control_send(CONSUMER_CTRL_VOL_UP));
-            break;
-
-        default:
-            APP_ERROR_HANDLER(pin);
-            break;
-        }
-    } else if (button_action == APP_BUTTON_RELEASE)
-    {
-        switch (pin) {
-        case VOLDOWN_BUTTON:
-        case VOLUP_BUTTON:
-            APP_ERROR_CHECK(consumer_control_send(RELEASE_KEY));
-            app_trace_log("Sending RELEASE_KEY");
-            break;
-
-        default:
-            APP_ERROR_HANDLER(pin);
-            break;
-        }
-    }
-}
-
-
-static void buttons_init(void)
-{
-    static app_button_cfg_t buttons[] =
-    {
-        {VOLDOWN_BUTTON,            false, BUTTON_PULL, button_event_handler},
-        {VOLUP_BUTTON,              false, BUTTON_PULL, button_event_handler}
-    };
-
-    app_button_init(buttons, sizeof(buttons) / sizeof(buttons[0]), BUTTON_DETECTION_DELAY);
-}
-
 /**@brief Function for initializing the Advertising functionality.
  */
 static void advertising_init(void)
@@ -1078,7 +1031,7 @@ void ADC_IRQHandler(void) {
 
 static void adc_timeout_handler(void *p_context)
 {
-    uint8_t battery_level;
+    uint32_t ble_battery_level;
     uint8_t i;
     uint32_t err_code;
 
@@ -1087,6 +1040,9 @@ static void adc_timeout_handler(void *p_context)
     app_trace_log("adc %d\r\n", (int)adc_sample);
 
     if (adc_mode == ADC_MODE_KEYPAD) {
+        adc_sample *= battery_correction;
+        app_trace_log("adc corrected for battery level %d\r\n", (int)adc_sample);
+
         for (i = 0; i < KEYPAD_NUMKEYS; i++) {
             if ((keymark[i].low <= adc_sample) &&
                 (keymark[i].high >= adc_sample)) {
@@ -1100,11 +1056,16 @@ static void adc_timeout_handler(void *p_context)
         consumer_control_send(RELEASE_KEY);
         app_trace_log("cc key release\r\n");
     } else {
-        battery_level = (adc_sample >> 1);
-        battery_level = (battery_level > 100)? 100 : adc_sample;
-        app_trace_log("battery level %d\r\n", battery_level);
+        battery_level = adc_sample;
+        battery_correction = ADC_BATTERY_3V3 / battery_level;
 
-        err_code = ble_bas_battery_level_update(&m_bas, battery_level);
+        /* Coin cells have a very shallow discharge curve, instead of reporting
+         * accurate information we cop out here
+         */
+        ble_battery_level = ((battery_level * 100)/(1<<8));
+        app_trace_log("battery level %d%%\r\n", (uint8_t)ble_battery_level);
+
+        err_code = ble_bas_battery_level_update(&m_bas, ble_battery_level);
         if ((err_code != NRF_SUCCESS) &&
             (err_code != NRF_ERROR_INVALID_STATE) &&
             (err_code != BLE_ERROR_NO_TX_BUFFERS) &&
@@ -1113,14 +1074,10 @@ static void adc_timeout_handler(void *p_context)
         {
             APP_ERROR_HANDLER(err_code);
         }
+
+        /* Switch ADC back for keypad measurements */
         adc_init(ADC_MODE_KEYPAD);
     }
-}
-
-static void keypad_power_init(void)
-{
-    nrf_gpio_cfg_output(KEYPAD_POWER_PIN);
-    nrf_gpio_pin_set(KEYPAD_POWER_PIN);
 }
 
 static void
@@ -1155,8 +1112,6 @@ int main(void)
     timers_init();
     buttons_leds_init(&erase_bonds);
 
-    keypad_power_init();
-    buttons_init();
     adc_init(ADC_MODE_KEYPAD);
     keypad_keypress_detection_init();
 
@@ -1172,6 +1127,9 @@ int main(void)
     timers_start();
     err_code = ble_advertising_start(BLE_ADV_MODE_FAST);
     APP_ERROR_CHECK(err_code);
+
+    // Force first battery check
+    battery_level_meas_timeout_handler(NULL);
 
     // Enter main loop.
     for (;;)
