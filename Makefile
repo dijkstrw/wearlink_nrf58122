@@ -1,16 +1,16 @@
-PROJECT_NAME := ble_app_hids_keyboard_s110_pca10001
+PROJECT_NAME := wearlink
 
 MAKEFILE_NAME := $(MAKEFILE_LIST)
 MAKEFILE_DIR := $(dir $(MAKEFILE_NAME))
 
-SDK_PATH = /opt/nrf51_sdk_10_0_0
+SDK_PATH = ./nrf51_sdk_10_0_0
 PROJECT_PATH = .
 TEMPLATE_PATH = $(SDK_PATH)/components/toolchain/gcc
 GNU_INSTALL_ROOT := /usr
 GNU_VERSION := 4.9.3
 GNU_PREFIX := arm-none-eabi
 
-OUTPUT_FILENAME := nrf51422_xxac_s110
+OUTPUT_FILENAME := nrf51822_xxac_s110
 SOFTDEVICE_FILENAME := $(SDK_PATH)/components/softdevice/s110/hex/s110_nrf51_8.0.0_softdevice.hex
 export OUTPUT_FILENAME
 
@@ -49,7 +49,6 @@ $(SDK_PATH)/components/libraries/timer/app_timer_appsh.c \
 $(SDK_PATH)/components/libraries/trace/app_trace.c \
 $(SDK_PATH)/components/libraries/util/nrf_assert.c \
 $(SDK_PATH)/components/libraries/uart/retarget.c \
-$(SDK_PATH)/components/libraries/sensorsim/sensorsim.c \
 $(SDK_PATH)/components/libraries/uart/app_uart_fifo.c \
 $(SDK_PATH)/components/drivers_nrf/delay/nrf_delay.c \
 $(SDK_PATH)/components/drivers_nrf/common/nrf_drv_common.c \
@@ -76,7 +75,7 @@ $(SDK_PATH)/examples/bsp/bsp_btn_ble.c
 ASM_SOURCE_FILES  = $(SDK_PATH)/components/toolchain/gcc/gcc_startup_nrf51.s
 
 #includes common to all targets
-INC_PATHS  = -I$(PROJECT_PATH)/config/ble_app_hids_keyboard_s110_pca10028
+INC_PATHS  = -I$(PROJECT_PATH)/config/wearlink_s110_ble400
 INC_PATHS += -I$(PROJECT_PATH)/config
 INC_PATHS += -I$(PROJECT_PATH)/
 INC_PATHS += -I$(SDK_PATH)/components/libraries/scheduler
@@ -89,14 +88,13 @@ INC_PATHS += -I$(SDK_PATH)/components/libraries/util
 INC_PATHS += -I$(SDK_PATH)/components/ble/device_manager
 INC_PATHS += -I$(SDK_PATH)/components/drivers_nrf/uart
 INC_PATHS += -I$(SDK_PATH)/components/ble/common
-INC_PATHS += -I$(SDK_PATH)/components/libraries/sensorsim
 INC_PATHS += -I$(SDK_PATH)/components/drivers_nrf/pstorage
 INC_PATHS += -I$(SDK_PATH)/components/ble/ble_services/ble_dis
 INC_PATHS += -I$(SDK_PATH)/components/device
 INC_PATHS += -I$(SDK_PATH)/components/libraries/uart
 INC_PATHS += -I$(SDK_PATH)/components/libraries/button
 INC_PATHS += -I$(SDK_PATH)/components/libraries/timer
-INC_PATHS += -I$(SDK_PATH)/components/softdevice/s130/headers
+INC_PATHS += -I$(SDK_PATH)/components/softdevice/s110/headers
 INC_PATHS += -I$(SDK_PATH)/components/drivers_nrf/gpiote
 INC_PATHS += -I$(SDK_PATH)/components/drivers_nrf/hal
 INC_PATHS += -I$(SDK_PATH)/components/toolchain/gcc
@@ -151,17 +149,17 @@ ASMFLAGS += -DBLE_STACK_SUPPORT_REQD
 ASMFLAGS += -DSWI_DISABLE0
 ASMFLAGS += -DBSP_UART_SUPPORT
 #default target - first one defined
-default: clean nrf51422_xxac_s110
+default: clean nrf51822_xxac_s110
 
 #building all targets
 all: clean
 	$(NO_ECHO)$(MAKE) -f $(MAKEFILE_NAME) -C $(MAKEFILE_DIR) -e cleanobj
-	$(NO_ECHO)$(MAKE) -f $(MAKEFILE_NAME) -C $(MAKEFILE_DIR) -e nrf51422_xxac_s110
+	$(NO_ECHO)$(MAKE) -f $(MAKEFILE_NAME) -C $(MAKEFILE_DIR) -e nrf51822_xxac_s110
 
 #target for printing all targets
 help:
 	@echo following targets are available:
-	@echo 	nrf51422_xxac_s110
+	@echo 	nrf51822_xxac_s110
 	@echo 	flash_softdevice
 
 
@@ -179,8 +177,8 @@ vpath %.s $(ASM_PATHS)
 
 OBJECTS = $(C_OBJECTS) $(ASM_OBJECTS)
 
-nrf51422_xxac_s110: LINKER_SCRIPT=ble_app_hids_keyboard_gcc_nrf51.ld
-nrf51422_xxac_s110: $(BUILD_DIRECTORIES) $(OBJECTS) $(D_OBJECTS)
+nrf51822_xxac_s110: LINKER_SCRIPT=nrf51822_xxac_s110.ld
+nrf51822_xxac_s110: $(BUILD_DIRECTORIES) $(OBJECTS) $(D_OBJECTS)
 	@echo Linking target: $(OUTPUT_FILENAME).out
 	$(NO_ECHO)$(CC) $(LDFLAGS) $(OBJECTS) $(LIBS) -o $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).out
 	$(NO_ECHO)$(MAKE) -f $(MAKEFILE_NAME) -C $(MAKEFILE_DIR) -e finalize
@@ -248,18 +246,18 @@ flash:
 	openocd -f openocd-cli.cfg -c "init; program $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).hex verify; exit"
 
 flash_softdevice:
-	@echo Flashing: s110_nrf51_8.0.0_softdevice.hex
+	@echo Flashing: $(SOFTDEVICE_FILENAME)
 	openocd -f openocd-cli.cfg -c "init; program $(SOFTDEVICE_FILENAME) verify; exit"
 
 concat:
-	srec_cat $(SOFTDEVICE_FILENAME) -intel $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).hex -intel -o $(OUTPUT_BINARY_DIRECTORY)/concat.hex -intel --line-length=44
+	srec_cat $(SOFTDEVICE_FILENAME) -intel $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).hex -intel -o $(OUTPUT_BINARY_DIRECTORY)/wearlink_s110.hex -intel --line-length=44
 
 flash_all:
 	@echo Flashing: all
-	openocd -f openocd-cli.cfg -c "init; program $(OUTPUT_BINARY_DIRECTORY)/concat.hex verify; exit"
+	openocd -f openocd-cli.cfg -c "init; program $(OUTPUT_BINARY_DIRECTORY)/wearlink_s110.hex verify; exit"
 
 .gdb_config_oocd:
-	echo -e > .gdb_config_oocd "source gdb-regview/gdb-regview.py\nregview load gdb-regview/defs/nrf51.xml\nfile $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).out\ntarget extended-remote | openocd -f openocd.cfg\n"
+	echo -e > .gdb_config_oocd "file $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).out\ntarget extended-remote | openocd -f openocd.cfg\n"
 
 debug: .gdb_config_oocd
 	$(GDB) --command=.gdb_config_oocd
