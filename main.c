@@ -60,7 +60,7 @@
 #define APP_TIMER_PRESCALER              0                                              /**< Value of the RTC1 PRESCALER register. */
 #define APP_TIMER_OP_QUEUE_SIZE          4                                              /**< Size of timer operation queues. */
 
-#define BATTERY_LEVEL_MEAS_INTERVAL      APP_TIMER_TICKS(200000, APP_TIMER_PRESCALER)     /**< Battery level measurement interval (ticks). */
+#define BATTERY_LEVEL_MEAS_INTERVAL      APP_TIMER_TICKS(60000, APP_TIMER_PRESCALER)     /**< Battery level measurement interval (ticks). */
 
 #define ADC_MEAS_INTERVAL                APP_TIMER_TICKS(30, APP_TIMER_PRESCALER)
 
@@ -178,14 +178,14 @@ static float                             battery_correction = 1.0;
   | ! | Key                           |       Rk |         Uau |      Ua |   Vscaled |      Adc |   A-D% |    A+D% |
   |   |                               |          |   unsampled | sampled |           |          |        |         |
   |---+-------------------------------+----------+-------------+---------+-----------+----------+--------+---------|
-  | # | RELEASE_KEY                   | 10000000 |       0.005 |   0.034 |     0.011 |        2 |      2 |       2 |
-  | # | CONSUMER_CTRL_VOL_DW          |    10000 |       1.800 |   1.780 |     0.593 |      127 |    121 |     133 |
-  | # | CONSUMER_CTRL_SCAN_PREV_TRACK |    20000 |       1.350 |   1.331 |     0.444 |       95 |     90 |     100 |
-  | # | CONSUMER_CTRL_PLAY            |    47000 |       0.806 |   0.799 |     0.266 |       57 |     54 |      60 |
-  | # | CONSUMER_CTRL_SCAN_NEXT_TRACK |    30000 |       1.080 |   1.066 |     0.355 |       76 |     72 |      80 |
-  | # | CONSUMER_CTRL_VOL_UP          |     5600 |       2.109 |   2.093 |     0.698 |      149 |    142 |     156 |
+  | # | RELEASE_KEY                   | 10000000 |       0.007 |   0.036 |     0.012 |        3 |      3 |       3 |
+  | # | CONSUMER_CTRL_VOL_DW          |    10000 |       2.400 |   2.370 |     0.790 |      169 |    161 |     177 |
+  | # | CONSUMER_CTRL_SCAN_PREV_TRACK |    20000 |       1.800 |   1.770 |     0.590 |      126 |    120 |     132 |
+  | # | CONSUMER_CTRL_PLAY            |    47000 |       1.075 |   1.058 |     0.353 |       75 |     71 |      79 |
+  | # | CONSUMER_CTRL_SCAN_NEXT_TRACK |    30000 |       1.440 |   1.415 |     0.472 |      101 |     96 |     106 |
+  | # | CONSUMER_CTRL_VOL_UP          |     5600 |       2.812 |   2.788 |     0.929 |      198 |    188 |     208 |
   |---+-------------------------------+----------+-------------+---------+-----------+----------+--------+---------|
-  | $ | Vcc=3.3                       | Rl=20000 | Rain=389200 |         | scale=1/3 | Vref=1.2 | bits=8 | dev=.05 |
+  | $ | Vcc=3.6                       | Rl=20000 | Rain=389200 |         | scale=1/3 | Vref=1.2 | bits=8 | dev=.05 |
   #+TBLFM: $4=($Rl/($Rk+$Rl))*$Vcc;%.3f::$5=(-(($Vref/2)*$3)/$Rain-$Vcc)/((-$3/$Rain)-($3/$Rl)-1);%.3f::$6=$Ua*$scale;%.3f::$7=$Vscaled/($Vref/2^$bits);%.0f::$8=max($7-($dev*$7),0);%.0f::$9=min($7+($dev*$7),2^$bits);%0.f
 
   Note that the measurement is compared to the internal reference, and that the
@@ -193,7 +193,7 @@ static float                             battery_correction = 1.0;
   account by adjusting the adc read voltage by a battery level correction.
 */
 
-#define ADC_BATTERY_3V3  (3.3/(3.6/(1<<8)))
+#define ADC_BATTERY_3V6  (1<<8)
 
 typedef enum
 {
@@ -214,11 +214,11 @@ const struct keymark {
     uint8_t high;
 } keymark[KEYPAD_NUMKEYS] = {
 /* BEGIN RECEIVE ORGTBL keymarks */
-   { CONSUMER_CTRL_VOL_DW, 146, 162 },
-   { CONSUMER_CTRL_SCAN_PREV_TRACK, 109, 121 },
-   { CONSUMER_CTRL_PLAY, 66, 72 },
-   { CONSUMER_CTRL_SCAN_NEXT_TRACK, 87, 97 },
-   { CONSUMER_CTRL_VOL_UP, 173, 191 },
+   { CONSUMER_CTRL_VOL_DW,          161, 177 },
+   { CONSUMER_CTRL_SCAN_PREV_TRACK, 120, 132 },
+   { CONSUMER_CTRL_PLAY,             71,  79 },
+   { CONSUMER_CTRL_SCAN_NEXT_TRACK,  96, 106 },
+   { CONSUMER_CTRL_VOL_UP,          188, 208 },
 /* END RECEIVE ORGTBL keymarks */
 };
 volatile int32_t adc_sample;
@@ -1057,12 +1057,12 @@ static void adc_timeout_handler(void *p_context)
         app_trace_log("cc key release\r\n");
     } else {
         battery_level = adc_sample;
-        battery_correction = ADC_BATTERY_3V3 / battery_level;
+        battery_correction = ((float)ADC_BATTERY_3V6) / battery_level;
 
         /* Coin cells have a very shallow discharge curve, instead of reporting
          * accurate information we cop out here
          */
-        ble_battery_level = ((battery_level * 100)/(1<<8));
+        ble_battery_level = ((battery_level * 100)/ADC_BATTERY_3V6);
         app_trace_log("battery level %d%%\r\n", (uint8_t)ble_battery_level);
 
         err_code = ble_bas_battery_level_update(&m_bas, ble_battery_level);
