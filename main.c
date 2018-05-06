@@ -54,13 +54,14 @@
 #define INPUT_CC_REP_REF_ID	         1
 #define INPUT_CC_REPORT_KEYS_MAX_LEN	 1
 
-#define DEVICE_NAME                      "WearLink"                              /**< Name of device. Will be included in the advertising data. */
-#define MANUFACTURER_NAME                "Dijkstra.xyz"                          /**< Manufacturer. Will be passed to Device Information Service. */
+#define DEVICE_NAME                      "WearLink"                                     /**< Name of device. Will be included in the advertising data. */
+#define MANUFACTURER_NAME                "Dijkstra.xyz"                                 /**< Manufacturer. Will be passed to Device Information Service. */
 
 #define APP_TIMER_PRESCALER              0                                              /**< Value of the RTC1 PRESCALER register. */
 #define APP_TIMER_OP_QUEUE_SIZE          4                                              /**< Size of timer operation queues. */
 
-#define BATTERY_LEVEL_MEAS_INTERVAL      APP_TIMER_TICKS(60000, APP_TIMER_PRESCALER)     /**< Battery level measurement interval (ticks). */
+#define BATTERY_LEVEL_MEAS_INTERVAL      APP_TIMER_TICKS(60000, APP_TIMER_PRESCALER)    /**< Battery level measurement interval (ticks). */
+#define MAX_IDLE_BATTERY_MEAS            10                                             /**< Maximum idle battery measurement intervals until autosleep */
 
 #define ADC_MEAS_INTERVAL                APP_TIMER_TICKS(30, APP_TIMER_PRESCALER)
 
@@ -138,7 +139,7 @@ static ble_uuid_t m_adv_uuids[] = {{BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE, BLE
 static adc_mode_t                        adc_mode;
 static uint8_t                           battery_level;
 static float                             battery_correction = 1.0;
-
+static uint8_t                           idle_counter = 0;
 /*
   Fibretronics wearlink is a string of push button (no) switches individually
   in series with a resistor. When no button is pressed it is open
@@ -1040,6 +1041,7 @@ static void adc_timeout_handler(void *p_context)
     app_trace_log("adc %d\r\n", (int)adc_sample);
 
     if (adc_mode == ADC_MODE_KEYPAD) {
+        idle_counter = 0;
         adc_sample *= battery_correction;
         app_trace_log("adc corrected for battery level %d\r\n", (int)adc_sample);
 
@@ -1056,6 +1058,7 @@ static void adc_timeout_handler(void *p_context)
         consumer_control_send(RELEASE_KEY);
         app_trace_log("cc key release\r\n");
     } else {
+        idle_counter++;
         battery_level = adc_sample;
         battery_correction = ((float)ADC_BATTERY_3V6) / battery_level;
 
@@ -1077,6 +1080,14 @@ static void adc_timeout_handler(void *p_context)
 
         /* Switch ADC back for keypad measurements */
         adc_init(ADC_MODE_KEYPAD);
+    }
+
+    if (idle_counter >= MAX_IDLE_BATTERY_MEAS) {
+        app_trace_log("idle for too long -- sleeping\n\r");
+        sd_ble_gap_disconnect(m_conn_handle,
+                              BLE_HCI_REMOTE_DEV_TERMINATION_DUE_TO_POWER_OFF);
+        idle_counter = 0;
+        sleep_mode_enter();
     }
 }
 
