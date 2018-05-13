@@ -68,8 +68,7 @@ $(SDK_PATH)/components/ble/device_manager/device_manager_peripheral.c \
 $(SDK_PATH)/components/toolchain/system_nrf51.c \
 $(SDK_PATH)/components/softdevice/common/softdevice_handler/softdevice_handler.c \
 $(SDK_PATH)/components/softdevice/common/softdevice_handler/softdevice_handler_appsh.c \
-$(SDK_PATH)/examples/bsp/bsp.c \
-$(SDK_PATH)/examples/bsp/bsp_btn_ble.c
+$(SDK_PATH)/examples/bsp/bsp.c
 
 #assembly files common to all targets
 ASM_SOURCE_FILES  = $(SDK_PATH)/components/toolchain/gcc/gcc_startup_nrf51.s
