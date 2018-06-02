@@ -10,7 +10,7 @@ GNU_INSTALL_ROOT := /usr
 GNU_VERSION := 4.9.3
 GNU_PREFIX := arm-none-eabi
 
-OUTPUT_FILENAME := nrf51822_xxac_s110
+OUTPUT_FILENAME := nrf51822_xxaa_s110
 SOFTDEVICE_FILENAME := $(SDK_PATH)/components/softdevice/s110/hex/s110_nrf51_8.0.0_softdevice.hex
 export OUTPUT_FILENAME
 
@@ -73,8 +73,11 @@ $(SDK_PATH)/examples/bsp/bsp.c
 #assembly files common to all targets
 ASM_SOURCE_FILES  = $(SDK_PATH)/components/toolchain/gcc/gcc_startup_nrf51.s
 
+# Select board
+#INC_PATHS  = -I$(PROJECT_PATH)/config/wearlink_s110_ble400
+INC_PATHS  = -I$(PROJECT_PATH)/config/wearlink_s110_s4at
+
 #includes common to all targets
-INC_PATHS  = -I$(PROJECT_PATH)/config/wearlink_s110_ble400
 INC_PATHS += -I$(PROJECT_PATH)/config
 INC_PATHS += -I$(PROJECT_PATH)/
 INC_PATHS += -I$(SDK_PATH)/components/libraries/scheduler
@@ -118,9 +121,11 @@ CFLAGS += -DNRF51
 CFLAGS += -DS110
 CFLAGS += -DBLE_STACK_SUPPORT_REQD
 CFLAGS += -DSWI_DISABLE0
-CFLAGS += -DBSP_UART_SUPPORT
-CFLAGS += -DENABLE_DEBUG_LOG_SUPPORT
-CFLAGS += -DDEBUG
+
+# Only for BLE400 board
+# CFLAGS += -DBSP_UART_SUPPORT
+# CFLAGS += -DENABLE_DEBUG_LOG_SUPPORT
+ CFLAGS += -DDEBUG
 CFLAGS += -mcpu=cortex-m0
 CFLAGS += -mthumb -mabi=aapcs --std=gnu99
 CFLAGS += -Wall -g -O0
@@ -130,7 +135,7 @@ CFLAGS += -ffunction-sections -fdata-sections -fno-strict-aliasing
 CFLAGS += -fno-builtin --short-enums
 
 # keep every function in separate section. This will allow linker to dump unused functions
-LDFLAGS += -Xlinker -Map=$(LISTING_DIRECTORY)/$(OUTPUT_FILENAME).map
+LDFLAGS += -Xlinker -Map=$(LISTING_DIRECTORY)/$(basename $(notdir $(LINKER_SCRIPT))).map
 LDFLAGS += -mthumb -mabi=aapcs -L $(TEMPLATE_PATH) -T$(LINKER_SCRIPT)
 LDFLAGS += -mcpu=cortex-m0
 # let linker to dump unused sections
@@ -148,17 +153,19 @@ ASMFLAGS += -DBLE_STACK_SUPPORT_REQD
 ASMFLAGS += -DSWI_DISABLE0
 ASMFLAGS += -DBSP_UART_SUPPORT
 #default target - first one defined
-default: clean nrf51822_xxac_s110
+default: clean nrf51822_xxac_s110 nrf51822_xxaa_s110 finalize
 
 #building all targets
 all: clean
 	$(NO_ECHO)$(MAKE) -f $(MAKEFILE_NAME) -C $(MAKEFILE_DIR) -e cleanobj
 	$(NO_ECHO)$(MAKE) -f $(MAKEFILE_NAME) -C $(MAKEFILE_DIR) -e nrf51822_xxac_s110
+	$(NO_ECHO)$(MAKE) -f $(MAKEFILE_NAME) -C $(MAKEFILE_DIR) -e nrf51822_xxaa_s110
 
 #target for printing all targets
 help:
 	@echo following targets are available:
 	@echo 	nrf51822_xxac_s110
+	@echo 	nrf51822_xxaa_s110
 	@echo 	flash_softdevice
 
 
@@ -176,11 +183,15 @@ vpath %.s $(ASM_PATHS)
 
 OBJECTS = $(C_OBJECTS) $(ASM_OBJECTS)
 
-nrf51822_xxac_s110: LINKER_SCRIPT=nrf51822_xxac_s110.ld
+nrf51822_xxac_s110: LINKER_SCRIPT=config/wearlink_s110_ble400/nrf51822_xxac_s110.ld
 nrf51822_xxac_s110: $(BUILD_DIRECTORIES) $(OBJECTS) $(D_OBJECTS)
-	@echo Linking target: $(OUTPUT_FILENAME).out
-	$(NO_ECHO)$(CC) $(LDFLAGS) $(OBJECTS) $(LIBS) -o $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).out
-	$(NO_ECHO)$(MAKE) -f $(MAKEFILE_NAME) -C $(MAKEFILE_DIR) -e finalize
+	@echo Linking target: $(OUTPUT_BINARY_DIRECTORY)/$(basename $(notdir $(LINKER_SCRIPT))).out
+	$(NO_ECHO)$(CC) $(LDFLAGS) $(OBJECTS) $(LIBS) -o $(OUTPUT_BINARY_DIRECTORY)/$(basename $(notdir $(LINKER_SCRIPT))).out
+
+nrf51822_xxaa_s110: LINKER_SCRIPT=config/wearlink_s110_s4at/nrf51822_xxaa_s110.ld
+nrf51822_xxaa_s110: $(BUILD_DIRECTORIES) $(OBJECTS) $(D_OBJECTS)
+	@echo Linking target: $(OUTPUT_BINARY_DIRECTORY)/$(basename $(notdir $(LINKER_SCRIPT))).out
+	$(NO_ECHO)$(CC) $(LDFLAGS) $(OBJECTS) $(LIBS) -o $(OUTPUT_BINARY_DIRECTORY)/$(basename $(notdir $(LINKER_SCRIPT))).out
 
 ## Create build directories
 $(BUILD_DIRECTORIES):
@@ -260,3 +271,7 @@ flash_all:
 
 debug: .gdb_config_oocd
 	$(GDB) --command=.gdb_config_oocd
+
+mass_erase:
+	# For nrf51822-S4AT modules, that come preinstalled with factory firmware
+	openocd -f openocd-cli.cfg -c "init; nrf51 mass_erase"
