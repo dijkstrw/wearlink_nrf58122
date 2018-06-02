@@ -37,7 +37,6 @@
 #include "ble_dis.h"
 #include "ble_conn_params.h"
 #include "bsp.h"
-#include "bsp_btn_ble.h"
 #include "app_scheduler.h"
 #include "softdevice_handler_appsh.h"
 #include "app_timer_appsh.h"
@@ -47,8 +46,6 @@
 
 
 #define IS_SRVC_CHANGED_CHARACT_PRESENT  0                                              /**< Include or not the service_changed characteristic. if not enabled, the server's database cannot be changed for the lifetime of the device*/
-
-#define BUTTON_DETECTION_DELAY           APP_TIMER_TICKS(50, APP_TIMER_PRESCALER)       /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
 
 #define INPUT_CCONTROL_KEYS_INDEX	 0
 #define INPUT_CC_REP_REF_ID	         1
@@ -106,6 +103,9 @@
 #define KEYPAD_SENSE_PIN                  4
 #define KEYPAD_NUMKEYS                    5
 
+#define KEYPAD_COMBINATIONS               1
+#define KEYPAD_COMBINATION_MAXLEN         10
+
 typedef enum
 {
     BLE_NO_ADV,               /**< No advertising running. */
@@ -137,6 +137,7 @@ static dm_handle_t                       m_bonded_peer_handle;                  
 static ble_uuid_t m_adv_uuids[] = {{BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE, BLE_UUID_TYPE_BLE}};
 
 static adc_mode_t                        adc_mode;
+volatile int32_t                         adc_sample;
 static uint8_t                           battery_level;
 static float                             battery_correction = 1.0;
 static uint8_t                           idle_counter = 0;
@@ -222,11 +223,35 @@ const struct keymark {
    { CONSUMER_CTRL_VOL_UP,          188, 208 },
 /* END RECEIVE ORGTBL keymarks */
 };
-volatile int32_t adc_sample;
 
-static void on_hids_evt(ble_hids_t * p_hids, ble_hids_evt_t * p_evt);
+typedef enum
+{
+    NO_ACTION,
+    ACTION_ERASE_BONDS
+} keycombo_action_t;
+
+struct keycombo {
+    uint8_t len;
+    uint8_t cur;
+    keycombo_action_t action;
+    uint8_t keys[KEYPAD_COMBINATION_MAXLEN];
+} keycombo[KEYPAD_COMBINATIONS] = {
+    {7, 0, ACTION_ERASE_BONDS,
+     { CONSUMER_CTRL_PLAY,
+       CONSUMER_CTRL_PLAY,
+       CONSUMER_CTRL_PLAY,
+       CONSUMER_CTRL_VOL_DW,
+       CONSUMER_CTRL_VOL_DW,
+       CONSUMER_CTRL_VOL_UP,
+       CONSUMER_CTRL_VOL_UP }},
+};
+
+static uint8_t adc_process_battery_measurement(int32_t sample);
+static uint8_t adc_process_keypad_measurement(int32_t sample);
 static void adc_init(adc_mode_t mode_req);
 static void adc_timeout_handler(void *p_context);
+static void keypad_combo_handler(uint8_t key);
+static void on_hids_evt(ble_hids_t * p_hids, ble_hids_evt_t * p_evt);
 
 /*
  * Fibretronics wearlink is a string of push button (no) switches individually
@@ -562,12 +587,8 @@ static uint32_t consumer_control_send(consumer_control_t cmd)
  */
 static void sleep_mode_enter(void)
 {
-    uint32_t err_code = bsp_indication_set(BSP_INDICATE_IDLE);
-    APP_ERROR_CHECK(err_code);
-
-    // Prepare wakeup buttons.
-    err_code = bsp_btn_ble_sleep_mode_prepare();
-    APP_ERROR_CHECK(err_code);
+    uint32_t err_code;
+    bsp_indication_set(BSP_INDICATE_IDLE);
 
     // Go to system-off mode (this function will not return; wakeup will cause a reset).
     err_code = sd_power_system_off();
@@ -787,7 +808,6 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
 static void ble_evt_dispatch(ble_evt_t * p_ble_evt)
 {
     dm_ble_evt_handler(p_ble_evt);
-    bsp_btn_ble_on_ble_evt(p_ble_evt);
     on_ble_evt(p_ble_evt);
     ble_advertising_on_ble_evt(p_ble_evt);
     ble_conn_params_on_ble_evt(p_ble_evt);
@@ -819,7 +839,7 @@ static void ble_stack_init(void)
     uint32_t err_code;
 
     // Initialize the SoftDevice handler module.
-    SOFTDEVICE_HANDLER_APPSH_INIT(NRF_CLOCK_LFCLKSRC_XTAL_20_PPM, true);
+    SOFTDEVICE_HANDLER_APPSH_INIT(NRF_CLOCK_LFCLKSRC, true);
 
     // Enable BLE stack
     ble_enable_params_t ble_enable_params;
@@ -936,14 +956,11 @@ static uint32_t device_manager_evt_handler(dm_handle_t const    * p_handle,
 
 
 /**@brief Function for the Device Manager initialization.
- *
- * @param[in] erase_bonds  Indicates whether bonding information should be cleared from
- *                         persistent storage during initialization of the Device Manager.
  */
-static void device_manager_init(bool erase_bonds)
+static void device_manager_init()
 {
     uint32_t               err_code;
-    dm_init_param_t        init_param = {.clear_persistent_data = erase_bonds};
+    dm_init_param_t        init_param = {.clear_persistent_data = false};
     dm_application_param_t  register_param;
 
     // Initialize peer device handle.
@@ -972,24 +989,14 @@ static void device_manager_init(bool erase_bonds)
     APP_ERROR_CHECK(err_code);
 }
 
-
-/**@brief Function for initializing buttons and leds.
- *
- * @param[out] p_erase_bonds  Will be true if the clear bonding button was pressed to wake the application up.
+/**@brief Function for initializing leds.
  */
-static void buttons_leds_init(bool * p_erase_bonds)
+static void leds_init()
 {
-    bsp_event_t startup_event;
-
-    uint32_t err_code = bsp_init(BSP_INIT_LED | BSP_INIT_BUTTONS,
+    uint32_t err_code = bsp_init(BSP_INIT_LED,
                                  APP_TIMER_TICKS(100, APP_TIMER_PRESCALER),
                                  bsp_event_handler);
     APP_ERROR_CHECK(err_code);
-
-    err_code = bsp_btn_ble_init(NULL, &startup_event);
-    APP_ERROR_CHECK(err_code);
-
-    *p_erase_bonds = (startup_event == BSP_EVENT_CLEAR_BONDING_DATA);
 }
 
 /**@brief Function for the Power manager.
@@ -1018,10 +1025,10 @@ static void adc_init(adc_mode_t req_mode) {
         nrf_adc_input_select(NRF_ADC_CONFIG_INPUT_DISABLED);
         adc_mode = ADC_MODE_BATTERY;
     }
+    adc_sample = -1;
     nrf_adc_int_enable(ADC_INTENSET_END_Enabled << ADC_INTENSET_END_Pos);
     NVIC_SetPriority(ADC_IRQn, NRF_APP_PRIORITY_HIGH);
     NVIC_EnableIRQ(ADC_IRQn);
-    adc_sample = -1;
 }
 
 void ADC_IRQHandler(void) {
@@ -1032,8 +1039,8 @@ void ADC_IRQHandler(void) {
 
 static void adc_timeout_handler(void *p_context)
 {
-    uint32_t ble_battery_level;
-    uint8_t i;
+    uint8_t ble_battery_level;
+    uint8_t key;
     uint32_t err_code;
 
     UNUSED_PARAMETER(p_context);
@@ -1042,31 +1049,15 @@ static void adc_timeout_handler(void *p_context)
 
     if (adc_mode == ADC_MODE_KEYPAD) {
         idle_counter = 0;
-        adc_sample *= battery_correction;
-        app_trace_log("adc corrected for battery level %d\r\n", (int)adc_sample);
-
-        for (i = 0; i < KEYPAD_NUMKEYS; i++) {
-            if ((keymark[i].low <= adc_sample) &&
-                (keymark[i].high >= adc_sample)) {
-                app_trace_log("cc key %d\r\n", keymark[i].key);
-                consumer_control_send(keymark[i].key);
-                return;
-            }
+        key = adc_process_keypad_measurement(adc_sample);
+        if (m_conn_handle != BLE_CONN_HANDLE_INVALID) {
+            consumer_control_send(key);
+        } else {
+            keypad_combo_handler(key);
         }
-
-        /* no key matched, send release */
-        consumer_control_send(RELEASE_KEY);
-        app_trace_log("cc key release\r\n");
     } else {
         idle_counter++;
-        battery_level = adc_sample;
-        battery_correction = ((float)ADC_BATTERY_3V6) / battery_level;
-
-        /* Coin cells have a very shallow discharge curve, instead of reporting
-         * accurate information we cop out here
-         */
-        ble_battery_level = ((battery_level * 100)/ADC_BATTERY_3V6);
-        app_trace_log("battery level %d%%\r\n", (uint8_t)ble_battery_level);
+        ble_battery_level = adc_process_battery_measurement(adc_sample);
 
         err_code = ble_bas_battery_level_update(&m_bas, ble_battery_level);
         if ((err_code != NRF_SUCCESS) &&
@@ -1078,7 +1069,6 @@ static void adc_timeout_handler(void *p_context)
             APP_ERROR_HANDLER(err_code);
         }
 
-        /* Switch ADC back for keypad measurements */
         adc_init(ADC_MODE_KEYPAD);
     }
 
@@ -1091,8 +1081,91 @@ static void adc_timeout_handler(void *p_context)
     }
 }
 
-static void
-keypad_sensed_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
+static uint8_t adc_process_battery_measurement(int32_t sample)
+{
+    uint8_t ble_battery_level;
+
+    battery_level = sample;
+    battery_correction = ((float)ADC_BATTERY_3V6) / battery_level;
+
+    /* Coin cells have a very shallow discharge curve, instead of reporting
+     * accurate information we cop out here
+     */
+    ble_battery_level = ((battery_level * 100)/ADC_BATTERY_3V6);
+    app_trace_log("battery level %d%%\r\n", (uint8_t)ble_battery_level);
+
+    return ble_battery_level;
+}
+
+static uint8_t adc_process_keypad_measurement(int32_t sample)
+{
+    uint8_t i;
+
+    adc_sample *= battery_correction;
+    app_trace_log("adc corrected for battery level %d\r\n", (int)adc_sample);
+
+    for (i = 0; i < KEYPAD_NUMKEYS; i++) {
+        if ((keymark[i].low <= adc_sample) &&
+            (keymark[i].high >= adc_sample)) {
+            app_trace_log("cc key %d\r\n", keymark[i].key);
+            return keymark[i].key;
+        }
+    }
+
+    return RELEASE_KEY;
+}
+
+static void keypad_combo_action(keycombo_action_t action)
+{
+    uint32_t err_code;
+
+    switch (action) {
+    case ACTION_ERASE_BONDS:
+        err_code = dm_device_delete_all(&m_app_handle);
+        APP_ERROR_CHECK(err_code);
+
+        err_code = ble_advertising_restart_without_whitelist();
+        if (err_code != NRF_ERROR_INVALID_STATE)
+        {
+            APP_ERROR_CHECK(err_code);
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+static void keypad_combo_handler(uint8_t key)
+{
+    uint8_t i;
+
+    if (key == RELEASE_KEY)
+        return;
+
+    for (i = 0; i < KEYPAD_COMBINATIONS; i++) {
+        if (keycombo[i].keys[keycombo[i].cur] == key) {
+            app_trace_log("keycombo %d match %d\n\r", i, keycombo[i].cur);
+            keycombo[i].cur++;
+            if (keycombo[i].cur == keycombo[i].len) {
+                app_trace_log("keycombo %d matched", i);
+                keypad_combo_action(keycombo[i].action);
+                keycombo[i].cur = 0;
+            }
+            if (keycombo[i].cur > keycombo[i].len) {
+                keycombo[i].cur = 0;
+            }
+        } else {
+            keycombo[i].cur = 0;
+        }
+    }
+}
+
+/*
+ * Keypad activity is detected using GPIOTE level changes on a sense pin.
+ * This GPIOTE activity is also used to wake from app sleep.
+ */
+static void keypad_sensed_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 {
     app_trace_log("key change sensed\r\n");
     if (adc_mode == ADC_MODE_KEYPAD) {
@@ -1106,29 +1179,50 @@ static void keypad_keypress_detection_init(void)
     uint32_t err_code;
     nrf_drv_gpiote_in_config_t config = GPIOTE_CONFIG_IN_SENSE_TOGGLE(false);
 
+    err_code = nrf_drv_gpiote_init();
+    APP_ERROR_CHECK(err_code);
     err_code = nrf_drv_gpiote_in_init(KEYPAD_SENSE_PIN, &config, keypad_sensed_handler);
     APP_ERROR_CHECK(err_code);
     nrf_drv_gpiote_in_event_enable(KEYPAD_SENSE_PIN, false);
+}
+
+/*
+ * At boot read adc for keypresses that indicate special application events.
+ */
+static void keypad_boot_buttons(void)
+{
+    uint8_t key;
+
+    adc_init(ADC_MODE_BATTERY);
+    nrf_adc_start();
+    while (adc_sample == -1);
+    adc_process_battery_measurement(adc_sample);
+
+    adc_init(ADC_MODE_KEYPAD);
+    nrf_adc_start();
+    while (adc_sample == -1);
+    key = adc_process_keypad_measurement(adc_sample);
+    app_trace_log("startup key %d\n\r", key);
 }
 
 /**@brief Function for application main entry.
  */
 int main(void)
 {
-    bool erase_bonds;
     uint32_t err_code;
 
     // Initialize.
     app_trace_init();
-    timers_init();
-    buttons_leds_init(&erase_bonds);
+    keypad_boot_buttons();
 
-    adc_init(ADC_MODE_KEYPAD);
+    timers_init();
+    leds_init();
+
     keypad_keypress_detection_init();
 
     ble_stack_init();
     scheduler_init();
-    device_manager_init(erase_bonds);
+    device_manager_init();
     gap_params_init();
     advertising_init();
     services_init();
@@ -1138,9 +1232,6 @@ int main(void)
     timers_start();
     err_code = ble_advertising_start(BLE_ADV_MODE_FAST);
     APP_ERROR_CHECK(err_code);
-
-    // Force first battery check
-    battery_level_meas_timeout_handler(NULL);
 
     // Enter main loop.
     for (;;)
