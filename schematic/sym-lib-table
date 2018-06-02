@@ -1,0 +1,4 @@
+(sym_lib_table
+  (lib (name WT51822-0S4AT)(type Legacy)(uri ${KIPRJMOD}/lib/WT51822-0S4AT.lib)(options "")(descr ""))
+  (lib (name fibretronickeypad)(type Legacy)(uri ${KIPRJMOD}/lib/fibretronickeypad.lib)(options "")(descr ""))
+)

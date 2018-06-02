@@ -1,4 +1,4 @@
-EESchema Schematic File Version 2
+EESchema Schematic File Version 4
 LIBS:power
 LIBS:device
 LIBS:switches
@@ -34,7 +34,7 @@ LIBS:valves
 LIBS:WT51822-0S4AT
 LIBS:fibretronickeypad
 LIBS:wearlink-cache
-EELAYER 25 0
+EELAYER 26 0
 EELAYER END
 $Descr A4 11693 8268
 encoding utf-8
@@ -73,28 +73,13 @@ $EndComp
 Wire Wire Line
 	2650 2750 2650 1850
 Wire Wire Line
-	2650 1850 7750 1850
+	2650 1850 3500 1850
 Wire Wire Line
 	4650 1850 4650 2050
 Wire Wire Line
 	2650 3050 2650 4050
 Wire Wire Line
-	2650 4050 7050 4050
-Wire Wire Line
-	4650 3650 4650 4050
-Wire Wire Line
-	4450 3800 4850 3800
-Wire Wire Line
-	4850 3800 4850 3650
-Wire Wire Line
-	4750 3800 4750 3650
-Connection ~ 4750 3800
-Wire Wire Line
-	4450 3800 4450 3650
-Connection ~ 4650 3800
-Wire Wire Line
-	4550 3800 4550 3650
-Connection ~ 4550 3800
+	2650 4050 3600 4050
 $Comp
 L +3.3V #PWR01
 U 1 1 5AEDB4DB
@@ -121,14 +106,13 @@ $Comp
 L R R1
 U 1 1 5AEDBA85
 P 6250 3550
-F 0 "R1" V 6330 3550 50  0000 C CNN
+F 0 "R1" H 6350 3550 50  0000 C CNN
 F 1 "20k" V 6250 3550 50  0000 C CNN
 F 2 "Resistors_SMD:R_0603" V 6180 3550 50  0001 C CNN
 F 3 "" H 6250 3550 50  0001 C CNN
 	1    6250 3550
 	1    0    0    -1  
 $EndComp
-Connection ~ 4650 4050
 $Comp
 L MMBT3904 Q1
 U 1 1 5AEDBB1B
@@ -144,7 +128,7 @@ $Comp
 L R R3
 U 1 1 5AEDBDFB
 P 7050 2150
-F 0 "R3" V 7130 2150 50  0000 C CNN
+F 0 "R3" H 7150 2150 50  0000 C CNN
 F 1 "1M" V 7050 2150 50  0000 C CNN
 F 2 "Resistors_SMD:R_0603" V 6980 2150 50  0001 C CNN
 F 3 "" H 7050 2150 50  0001 C CNN
@@ -170,17 +154,17 @@ Wire Wire Line
 Wire Wire Line
 	6650 3200 6750 3200
 Wire Wire Line
-	7050 2300 7050 3000
+	7050 2300 7050 2750
 Wire Wire Line
 	7050 1850 7050 2000
 Wire Wire Line
-	6250 2450 6250 3400
+	6250 2450 6250 3200
 Connection ~ 7050 2750
 Connection ~ 6250 3200
 Wire Wire Line
 	5450 2750 7050 2750
 Wire Wire Line
-	5450 2450 7750 2450
+	5450 2450 6250 2450
 Wire Wire Line
 	6350 3200 6250 3200
 Text GLabel 7050 2750 2    50   Input ~ 0
@@ -210,7 +194,7 @@ Wire Wire Line
 Wire Wire Line
 	3400 2950 3600 2950
 Wire Wire Line
-	3600 2950 3600 4050
+	3600 2950 3600 3150
 Wire Wire Line
 	3600 3150 3400 3150
 Connection ~ 3600 4050
@@ -241,4 +225,38 @@ Wire Wire Line
 	3800 3250 3800 3050
 Wire Wire Line
 	3800 3050 3400 3050
+Wire Wire Line
+	4550 3650 4550 3800
+Wire Wire Line
+	4550 3800 4650 3800
+Wire Wire Line
+	4650 3650 4650 3800
+Wire Wire Line
+	4750 3800 4750 3650
+Connection ~ 4650 3800
+Connection ~ 4650 4050
+Wire Wire Line
+	6250 4050 7050 4050
+Wire Wire Line
+	7050 2750 7050 3000
+Wire Wire Line
+	6250 3200 6250 3400
+Wire Wire Line
+	6250 2450 7750 2450
+Wire Wire Line
+	7050 1850 7750 1850
+Wire Wire Line
+	4650 1850 7050 1850
+Wire Wire Line
+	3600 4050 4650 4050
+Wire Wire Line
+	3600 3150 3600 4050
+Wire Wire Line
+	3500 1850 4650 1850
+Wire Wire Line
+	4650 3800 4750 3800
+Wire Wire Line
+	4650 3800 4650 4050
+Wire Wire Line
+	4650 4050 6250 4050
 $EndSCHEMATC
