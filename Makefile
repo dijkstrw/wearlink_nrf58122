@@ -125,10 +125,11 @@ CFLAGS += -DSWI_DISABLE0
 # Only for BLE400 board
 # CFLAGS += -DBSP_UART_SUPPORT
 # CFLAGS += -DENABLE_DEBUG_LOG_SUPPORT
- CFLAGS += -DDEBUG
+
+CFLAGS += -DDEBUG
+CFLAGS += -Wall -g -O0
 CFLAGS += -mcpu=cortex-m0
 CFLAGS += -mthumb -mabi=aapcs --std=gnu99
-CFLAGS += -Wall -g -O0
 CFLAGS += -mfloat-abi=soft
 # keep every function in separate section. This will allow linker to dump unused functions
 CFLAGS += -ffunction-sections -fdata-sections -fno-strict-aliasing

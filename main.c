@@ -57,7 +57,7 @@
 #define APP_TIMER_PRESCALER              0                                              /**< Value of the RTC1 PRESCALER register. */
 #define APP_TIMER_OP_QUEUE_SIZE          4                                              /**< Size of timer operation queues. */
 
-#define BATTERY_LEVEL_MEAS_INTERVAL      APP_TIMER_TICKS(60000, APP_TIMER_PRESCALER)    /**< Battery level measurement interval (ticks). */
+#define BATTERY_LEVEL_MEAS_INTERVAL      APP_TIMER_TICKS(120000, APP_TIMER_PRESCALER)   /**< Battery level measurement interval (ticks). */
 #define MAX_IDLE_BATTERY_MEAS            10                                             /**< Maximum idle battery measurement intervals until autosleep */
 
 #define ADC_MEAS_INTERVAL                APP_TIMER_TICKS(30, APP_TIMER_PRESCALER)
@@ -141,6 +141,8 @@ volatile int32_t                         adc_sample;
 static uint8_t                           battery_level;
 static float                             battery_correction = 1.0;
 static uint8_t                           idle_counter = 0;
+static uint8_t                           start_key = 0;
+
 /*
   Fibretronics wearlink is a string of push button (no) switches individually
   in series with a resistor. When no button is pressed it is open
@@ -631,6 +633,14 @@ static void on_hids_evt(ble_hids_t * p_hids, ble_hids_evt_t *p_evt)
                 // the connected central is not a new central. The system attributes
                 // will only be written to flash only when disconnected from this central.
                 // Do nothing now.
+            }
+
+            // If present, report the startup keypress
+            if (start_key) {
+                app_trace_log("sending startup registered key");
+                consumer_control_send(start_key);
+                start_key = 0;
+                consumer_control_send(RELEASE_KEY);
             }
         }
         else
@@ -1191,8 +1201,6 @@ static void keypad_keypress_detection_init(void)
  */
 static void keypad_boot_buttons(void)
 {
-    uint8_t key;
-
     adc_init(ADC_MODE_BATTERY);
     nrf_adc_start();
     while (adc_sample == -1);
@@ -1201,7 +1209,7 @@ static void keypad_boot_buttons(void)
     adc_init(ADC_MODE_KEYPAD);
     nrf_adc_start();
     while (adc_sample == -1);
-    key = adc_process_keypad_measurement(adc_sample);
+    start_key = adc_process_keypad_measurement(adc_sample);
     app_trace_log("startup key %d\n\r", key);
 }
 
